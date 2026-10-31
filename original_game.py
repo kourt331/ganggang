@@ -233,6 +233,9 @@ class PhysicsChronicles:
         self.game_over = False
         self.notice = "세 시대를 지나 물리의 공식을 익히세요"
         self.notice_until = 240
+        self.zone_notice_room = 0
+        self.zone_notice_subtitle = ""
+        self.zone_notice_until = 0
         self.music_path = Path(__file__).with_name("physics_chronicles.wav")
         self.music_process = None
         self.music_mci_alias = "physicschroniclesmusic"
@@ -725,9 +728,9 @@ class PhysicsChronicles:
                 self.room_wave_started = True
                 self.spawn_queue.clear()
                 if self.room_wave_index in self.blessing_events:
-                    self.say(f"3번째 구역 · 안전 상점  /  위인의 기운이 감지됩니다 · {self.key_label(self.controls['interact'])} 레버로 출구 열기")
+                    self.show_zone_notice(3, "가호 이벤트 · 레버로 출구")
                 else:
-                    self.say(f"3번째 구역 · 안전 상점  /  비둘기와 지팡이 상점 · {self.key_label(self.controls['interact'])} 레버로 출구 열기")
+                    self.show_zone_notice(3, "안전 상점 · 레버로 출구")
             if self.shop_exit_open and self.player["x"] + PLAYER_W >= SHOP_EXIT_X + 24:
                 self.collect_all_coins()
                 self.room_wave_index += 1
@@ -735,7 +738,7 @@ class PhysicsChronicles:
                 self.shop_exit_open = False
                 self.room_wave_started = False
                 self.set_room_gate(self.room_wave_index)
-                self.say(f"상점을 나왔습니다 · 구역 {self.room_wave_index + 1}/{ROOM_COUNT} 진입")
+                self.show_zone_notice(self.room_wave_index + 1, "상점 통과 · 전투 구역 진입")
             return
 
         if self.waves_complete or self.room_wave_index >= len(self.room_waves):
@@ -752,7 +755,7 @@ class PhysicsChronicles:
             grace = self.spawn_grace if self.room_wave_index == 0 else 30
             self.spawn_next_at = self.frame + grace
             if self.room_wave_index == 0:
-                self.say("안전 구역을 벗어났습니다 · 적 무리가 접근합니다")
+                self.show_zone_notice(1, "안전 구역 종료 · 적 접근")
 
         # Preserve the complete wave in the queue, releasing one enemy only
         # when fewer than six are active so simultaneous load stays bounded.
@@ -788,8 +791,8 @@ class PhysicsChronicles:
             self.room_wave_index += 1
             self.room_wave_started = False
             self.set_room_gate(self.room_wave_index)
-            pickup_text = f" · 남은 동전 {collected} G 자동 회수" if collected else ""
-            self.say(f"구역 {self.room_wave_index + 1}/{ROOM_COUNT} 개방 · 다음 적 무리 접근 중{pickup_text}")
+            subtitle = f"전투 구역 · 동전 {collected} G 회수" if collected else "전투 구역 진입 · 적 접근"
+            self.show_zone_notice(self.room_wave_index + 1, subtitle)
 
     def open_midrun_shop_exit(self):
         if not self.midrun_shop_active or self.shop_exit_open:
@@ -1274,6 +1277,12 @@ class PhysicsChronicles:
     def say(self, text):
         self.notice = text
         self.notice_until = self.frame + 180
+
+    def show_zone_notice(self, room_number, subtitle):
+        self.zone_notice_room = max(1, min(ROOM_COUNT, int(room_number)))
+        self.zone_notice_subtitle = subtitle
+        self.zone_notice_until = self.frame + 120
+        self.notice_until = self.frame
 
     def cooldown_frames(self, frames):
         return max(1, int(frames))
@@ -4909,7 +4918,20 @@ class PhysicsChronicles:
                           text="중력장 · 이동 속도 감소",
                           fill="#d9c5ff", font=("TkDefaultFont", 9, "bold"))
         c.create_text(self.w / 2, self.h - 28, text=ability_text, fill="#e6d49d", font=("TkDefaultFont", 10, "bold"))
-        if self.frame < self.notice_until and not self.transition:
+        if self.frame < self.zone_notice_until and not self.transition:
+            card_x, card_y = 14, 68
+            card_w, card_h = min(310, self.w * .36), 52
+            c.create_rectangle(card_x, card_y, card_x + card_w, card_y + card_h,
+                               fill="#17212b", outline="#526978", width=1)
+            c.create_rectangle(card_x, card_y, card_x + 4, card_y + card_h,
+                               fill="#e4c779", outline="")
+            c.create_text(card_x + 14, card_y + 8, anchor="nw",
+                          text=f"구역  {self.zone_notice_room:02d} / {ROOM_COUNT:02d}",
+                          fill="#f3d78f", font=("TkDefaultFont", 11, "bold"))
+            c.create_text(card_x + 14, card_y + 30, anchor="nw",
+                          text=self.zone_notice_subtitle, width=card_w - 26,
+                          fill="#e4e7e2", font=("TkDefaultFont", 9))
+        elif self.frame < self.notice_until and not self.transition:
             notice_y = 169
             c.create_rectangle(self.w * .16, notice_y - 18, self.w * .84, notice_y + 18,
                                fill="#151a25", outline="#8a7860", width=1)
