@@ -1,46 +1,337 @@
-
 <!doctype html>
-<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Physics Chronicles — 원본 웹 실행</title>
-<style>
-*{box-sizing:border-box}body{background:#090d16;color:#e8ddc3;margin:0;font-family:system-ui,sans-serif}main{max-width:1200px;margin:auto;padding:14px}canvas{display:block;width:100%;height:auto;background:#090d16;outline:none;image-rendering:pixelated;border:1px solid #42465a}button{background:#25394a;color:#fff0c8;border:1px solid #758092;border-radius:5px;padding:10px 18px;cursor:pointer}header{display:flex;gap:15px;align-items:center;flex-wrap:wrap;margin-bottom:10px}p{font-size:13px;color:#b3bdca}#error{white-space:pre-wrap;color:#ff9c9c}#status{font-size:14px}
-</style></head><body><main>
-<header><b>PHYSICS CHRONICLES · 원본 웹 실행</b><button id="start" disabled>로딩 중…</button><span id="status">Python 실행 환경을 불러오는 중입니다. 첫 실행은 시간이 걸릴 수 있습니다.</span></header>
-<canvas id="game" width="1100" height="700" tabindex="0"></canvas>
-<p>화면 클릭 후 조작 · ← → 이동 · C 더블점프 · ↓+C 발판 통과 · Z 대시 · X 검/지팡이 · V 축복 · F 총/운석 · Space 패링 · Q/W/E 기술 · B 지팡이 구매 · M 설정 · F11 전체화면 · Esc 창 모드<br>PC 키보드용입니다. 탭을 벗어나면 일시정지됩니다. 원본 Python은 그대로 실행하며 화면·입력·음악만 브라우저에 연결합니다.</p><pre id="error"></pre></main>
-<script src="https://cdn.jsdelivr.net/pyodide/v0.27.7/full/pyodide.js"></script><script>
-'use strict';
-const canvas=document.getElementById('game'),ctx=canvas.getContext('2d'),status=document.getElementById('status'),start=document.getElementById('start'),err=document.getElementById('error');
-const audio=new Audio('physics_chronicles.wav');audio.loop=true;audio.volume=.32;
-let running=false,focused=false,py,frameFn,keyFn,last=0,acc=0,failed=false;const sprites={},held=new Set();
-window.webMusic=(enabled,volume)=>{audio.volume=Math.max(0,Math.min(1,volume));if(enabled&&running&&focused){if(audio.paused)audio.play().catch(()=>{})}else audio.pause()};
-window.webFullscreen=enable=>{if(enable){if(!document.fullscreenElement)canvas.requestFullscreen?.().catch(()=>{})}else if(document.fullscreenElement)document.exitFullscreen?.().catch(()=>{})};
-window.loadSprites=json=>{for(const [id,img] of Object.entries(JSON.parse(json))){const c=document.createElement('canvas');c.width=img.w;c.height=img.h;const x=c.getContext('2d');for(let y=0;y<img.h;y++)for(let k=0;k<img.w;k++)if(img.rows[y][k]){x.fillStyle=img.rows[y][k];x.fillRect(k,y,1,1)}sprites[id]=c}};
-function color(s){if(s==='gray')return '#808080';return s}
-function renderItem(item){
- const [kind,a,o]=item;ctx.save();ctx.lineWidth=o.width??1;ctx.strokeStyle=color(o.outline||o.fill||'#000');ctx.fillStyle=color(o.fill||'#000');ctx.lineCap=o.capstyle==='round'?'round':o.capstyle==='projecting'?'square':'butt';if(o.dash)ctx.setLineDash(Array.isArray(o.dash)?o.dash:[4,4]);if(o.stipple)ctx.globalAlpha=.5;
- if(kind==='image'){const im=sprites[o.image];if(im){let x=a[0],y=a[1],anchor=o.anchor||'center';if(!anchor.includes('w'))x-=anchor.includes('e')?im.width:im.width/2;if(!anchor.includes('n'))y-=anchor.includes('s')?im.height:im.height/2;ctx.drawImage(im,x,y)}ctx.restore();return}
- if(kind==='text'){const f=o.font||['sans-serif',10],size=Math.abs(Number(f[1])||10)*4/3;ctx.font=(String(f[2]||'').includes('bold')?'bold ':'')+size+'px sans-serif';const anchor=o.anchor||'center',lines=String(o.text??'').split('\n'),lh=size*1.2;ctx.textAlign=anchor.includes('w')?'left':anchor.includes('e')?'right':'center';ctx.textBaseline='middle';let y=a[1]+(anchor.includes('n')?lh/2:anchor.includes('s')?-(lines.length-.5)*lh:-(lines.length-1)*lh/2);for(const line of lines){ctx.fillText(line,a[0],y);y+=lh}ctx.restore();return}
- ctx.beginPath();let closed=false;
- if(kind==='rectangle'){ctx.rect(a[0],a[1],a[2]-a[0],a[3]-a[1]);closed=true}
- else if(kind==='oval'||kind==='arc'){const cx=(a[0]+a[2])/2,cy=(a[1]+a[3])/2,rx=Math.abs(a[2]-a[0])/2,ry=Math.abs(a[3]-a[1])/2;if(rx>0&&ry>0){let s=kind==='oval'?0:-(o.start||0)*Math.PI/180,e=kind==='oval'?2*Math.PI:s-(o.extent??90)*Math.PI/180;if(kind==='arc'&&(!o.style||o.style==='pieslice'))ctx.moveTo(cx,cy);ctx.ellipse(cx,cy,rx,ry,0,s,e,kind==='arc'&&(o.extent??90)>0);if(kind==='oval'||o.style!=='arc'){ctx.closePath();closed=true}}}
- else{ctx.moveTo(a[0],a[1]);if(o.smooth&&a.length>=6){for(let i=2;i<a.length-2;i+=2)ctx.quadraticCurveTo(a[i],a[i+1],(a[i]+a[i+2])/2,(a[i+1]+a[i+3])/2);ctx.lineTo(a[a.length-2],a[a.length-1])}else for(let i=2;i<a.length;i+=2)ctx.lineTo(a[i],a[i+1]);if(kind==='polygon'){ctx.closePath();closed=true}}
- if(closed&&o.fill)ctx.fill();if(kind==='line'||o.outline===undefined||o.outline){if(kind==='line')ctx.strokeStyle=color(o.fill||'#000');ctx.stroke()}
- if(kind==='line'&&o.arrow){const tip=(x,y,xx,yy)=>{const angle=Math.atan2(y-yy,x-xx),length=8+ctx.lineWidth;ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(x-length*Math.cos(angle-.4),y-length*Math.sin(angle-.4));ctx.lineTo(x-length*Math.cos(angle+.4),y-length*Math.sin(angle+.4));ctx.closePath();ctx.fill()};if(o.arrow==='last'||o.arrow==='both')tip(a.at(-2),a.at(-1),a.at(-4),a.at(-3));if(o.arrow==='first'||o.arrow==='both')tip(a[0],a[1],a[2],a[3])}
- ctx.restore()
-}
-window.renderFrame=json=>{ctx.clearRect(0,0,1100,700);for(const i of JSON.parse(json))renderItem(i)};
-const keyMap={ArrowLeft:'Left',ArrowRight:'Right',ArrowUp:'Up',ArrowDown:'Down',' ':'space',Escape:'Escape',Enter:'Return',Backspace:'BackSpace',Tab:'Tab',Shift:'Shift_L',Control:'Control_L',Alt:'Alt_L'};
-function keyName(e){if(e.code.startsWith('Key'))return e.code.slice(3).toLowerCase();if(e.code.startsWith('Digit'))return e.code.slice(5);return keyMap[e.key]||e.key}
-function keyDown(e){if(!running||failed)return;const k=keyName(e);if(['Left','Right','Up','Down','space'].includes(k))e.preventDefault();if(!held.has(k)){held.add(k);try{keyFn(k,true)}catch(ex){report(ex)}}}
-function keyUp(e){const k=keyName(e);held.delete(k);if(keyFn)try{keyFn(k,false)}catch(ex){report(ex)}}
-function report(e){failed=true;audio.pause();status.textContent='실행 오류가 발생했습니다. 아래 오류 내용을 전달해 주세요.';err.textContent=String(e);console.error(e)}
-window.addEventListener('keydown',keyDown);window.addEventListener('keyup',keyUp);
-function pause(){focused=false;audio.pause();for(const k of held)try{keyFn(k,false)}catch(e){}held.clear();acc=0}
-function resume(){if(running&&!document.hidden){focused=true;last=performance.now();acc=0}}
-canvas.onblur=pause;window.addEventListener('blur',pause);window.addEventListener('focus',resume);document.addEventListener('visibilitychange',()=>{if(document.hidden)pause();else resume()});
-canvas.onfocus=()=>{focused=true;last=performance.now();if(running)webMusic(true,audio.volume)};
-canvas.onclick=()=>{focused=true;last=performance.now();canvas.focus();if(running)webMusic(true,audio.volume)};
-start.onclick=()=>{running=true;focused=true;last=performance.now();acc=0;canvas.focus();start.textContent='게임 화면에 포커스';status.textContent='실행 중 · 화면을 벗어나면 일시정지';webMusic(true,audio.volume)};
-function loop(now){if(running&&focused&&!failed){acc+=Math.min((now-last)/1000,.1);const steps=Math.min(6,Math.floor(acc*60));if(steps){acc-=steps/60;try{frameFn(steps)}catch(e){report(e)}}}else acc=0;last=now;requestAnimationFrame(loop)}
-(async()=>{try{py=await loadPyodide();status.textContent='원본 Python 게임과 그래픽을 준비하고 있습니다…';for(const file of ['original_game.py','web_adapter.py']){let r=await fetch(file,{cache:'no-store'});if(!r.ok){const pagesStatus=r.status,raw='https://raw.githubusercontent.com/kourt331/ganggang/main/'+file;r=await fetch(raw,{cache:'no-store'});if(!r.ok)throw Error(file+' 다운로드 실패: Pages '+pagesStatus+' / 원본 저장소 '+r.status)}py.FS.writeFile(file,await r.text())}await py.runPythonAsync('import web_adapter\nweb_adapter.init_game()\nweb_adapter.web_frame(0)');frameFn=py.runPython('web_adapter.web_frame');keyFn=py.runPython('web_adapter.web_key');start.disabled=false;start.textContent='게임 시작 / 음악 켜기';status.textContent='준비 완료 · 시작 버튼을 누르세요';requestAnimationFrame(loop)}catch(e){report(e)}})();
-</script></body></html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#11131d">
+  <title>Physics Chronicles</title>
+  <script src="https://cdn.jsdelivr.net/pyodide/v0.27.7/full/pyodide.js"></script>
+  <style>
+    :root { color-scheme: dark; font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background:#10121b; color:#f4eadb; }
+    * { box-sizing:border-box; }
+    html,body { margin:0; min-height:100%; background:radial-gradient(ellipse at 50% -20%, #373044 0%, #171824 54%, #10121b 100%); }
+    body { padding:18px 16px 20px; }
+    header { width:min(100%,1100px); margin:0 auto 10px; display:flex; align-items:center; justify-content:space-between; gap:16px; }
+    h1 { margin:0; color:#f3dfbd; font-size:clamp(18px,2.4vw,26px); letter-spacing:.08em; }
+    #state { color:#c6b9bd; font-size:13px; text-align:right; }
+    #stage-wrap { width:min(100%,1100px); margin:0 auto; position:relative; border:1px solid #6d5b6c; border-radius:10px; overflow:hidden; background:#090d16; box-shadow:0 16px 52px #05060bbb; }
+    #stage { display:block; width:100%; height:auto; aspect-ratio:11/7; image-rendering:pixelated; outline:none; touch-action:none; }
+    #loading { position:absolute; inset:0; display:grid; place-items:center; background:#11131d; color:#f3dfbd; font-size:16px; letter-spacing:.04em; z-index:4; }
+    #error { display:none; position:absolute; inset:0; overflow:auto; padding:28px; background:#1b1118f2; color:#ffd9d0; white-space:pre-wrap; z-index:5; font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; }
+    #controls { width:min(100%,1100px); margin:10px auto 0; color:#c8bec9; display:flex; flex-wrap:wrap; gap:7px 15px; justify-content:center; font-size:12px; }
+    #controls b { color:#f0d294; font-weight:700; }
+    #touch { width:min(100%,1100px); margin:12px auto 0; display:none; justify-content:space-between; gap:16px; touch-action:none; user-select:none; }
+    .touch-group { display:flex; gap:8px; }
+    .touch-key { min-width:48px; height:44px; border:1px solid #8b7587; border-radius:12px; color:#f6ead7; background:#282537eF; font-size:16px; font-weight:800; touch-action:none; }
+    .touch-key:active { background:#876176; }
+    #fullscreen { border:1px solid #756477; color:#e8d8c6; background:#242231; padding:8px 12px; border-radius:8px; cursor:pointer; }
+    .fullscreen { background:#10121b; }
+    .fullscreen body { position:fixed; inset:0; padding:0; display:grid; place-items:center; overflow:hidden; }
+    .fullscreen header,.fullscreen #controls,.fullscreen #touch { display:none !important; }
+    .fullscreen #stage-wrap { width:min(100vw,157vh); border:0; border-radius:0; box-shadow:none; }
+    .fullscreen #stage { width:100%; }
+    @media (pointer:coarse) { #touch { display:flex; } }
+    @media (max-width:620px) { body { padding:10px 7px 12px; } header { padding:0 5px; } #state { font-size:11px; } .touch-key { min-width:40px; height:40px; } #controls { font-size:10px; gap:5px 9px; } }
+  </style>
+</head>
+<body>
+  <header><h1>PHYSICS CHRONICLES</h1><div id="state">Python 런타임 준비 중…</div><button id="fullscreen" type="button">전체 화면</button></header>
+  <main id="stage-wrap">
+    <canvas id="stage" width="1100" height="700" tabindex="0" aria-label="Physics Chronicles"></canvas>
+    <div id="loading">PYTHON GAME LOADING · 잠시만 기다려 주세요</div>
+    <pre id="error"></pre>
+  </main>
+  <div id="controls">
+    <span><b>←/→</b> 이동</span><span><b>C</b> 점프·더블 점프</span><span><b>Z</b> 구르기</span>
+    <span><b>X</b> 검</span><span><b>Space</b> 패링</span><span><b>F</b> 원거리</span><span><b>M</b> 설정</span>
+    <span>문·대화는 게임 내 안내 키</span>
+  </div>
+  <div id="touch" aria-label="터치 조작">
+    <div class="touch-group"><button class="touch-key" data-key="ArrowLeft">◀</button><button class="touch-key" data-key="ArrowRight">▶</button></div>
+    <div class="touch-group"><button class="touch-key" data-key="c">점프</button><button class="touch-key" data-key="z">구르기</button><button class="touch-key" data-key="x">검</button><button class="touch-key" data-key=" ">패링</button></div>
+  </div>
+  <audio id="music" src="./physics_chronicles.wav" preload="auto" loop></audio>
+
+<script>
+(() => {
+  'use strict';
+  const canvas = document.getElementById('stage');
+  const ctx = canvas.getContext('2d');
+  const loading = document.getElementById('loading');
+  const errorBox = document.getElementById('error');
+  const status = document.getElementById('state');
+  const audio = document.getElementById('music');
+  const images = new Map();
+  let pythonRuntime = null;
+  let audioRequested = false, audioUnlocked = false;
+  let gameFrameRequest = 0;
+  let lastGameFrameTime = null;
+  let gameFrameAccumulator = 0;
+  ctx.imageSmoothingEnabled = false;
+
+  function color(value, fallback='transparent') { return value && value !== 'None' ? value : fallback; }
+  function parseFont(value) {
+    if (!Array.isArray(value)) return value || '12px system-ui';
+    const size = Number(value[1]) || 12;
+    const styles = value.slice(2).map(x => String(x).toLowerCase());
+    const weight = styles.includes('bold') ? '700' : '400';
+    const italic = styles.includes('italic') ? 'italic ' : '';
+    return `${italic}${weight} ${size}px system-ui, sans-serif`;
+  }
+  function anchorPoint(x1,y1,x2,y2,anchor) {
+    const a = String(anchor || 'center').toLowerCase();
+    const x = a.includes('w') ? x1 : a.includes('e') ? x2 : (x1+x2)/2;
+    const y = a.includes('n') ? y1 : a.includes('s') ? y2 : (y1+y2)/2;
+    return [x,y];
+  }
+  function wrapText(text, maxWidth) {
+    const result=[];
+    for (const paragraph of String(text ?? '').split('\n')) {
+      if (!maxWidth) { result.push(paragraph); continue; }
+      let line='';
+      for (const word of paragraph.split(/\s+/)) {
+        const next=line ? `${line} ${word}` : word;
+        if (line && ctx.measureText(next).width>maxWidth) { result.push(line); line=word; }
+        else line=next;
+      }
+      result.push(line);
+    }
+    return result;
+  }
+  function drawText(item,o,p) {
+    const [x,y]=p; ctx.font=parseFont(o.font);ctx.fillStyle=color(o.fill,'#eee');ctx.textAlign='left';ctx.textBaseline='top';
+    const anchor=String(o.anchor||'center').toLowerCase();
+    if(anchor.includes('e'))ctx.textAlign='right';else if(!anchor.includes('w'))ctx.textAlign='center';
+    if(anchor.includes('n'))ctx.textBaseline='top';else if(anchor.includes('s'))ctx.textBaseline='bottom';else ctx.textBaseline='middle';
+    const width=Number(o.width)||0;const lines=wrapText(o.text,width);const fontSize=Number(Array.isArray(o.font)?o.font[1]:0)||12;const lineHeight=fontSize*1.22;
+    if(lines.length===1){ctx.fillText(lines[0],x,y,width||undefined);return;}
+    let firstY=y;
+    if(ctx.textBaseline==='middle')firstY=y-(lines.length-1)*lineHeight/2;
+    else if(ctx.textBaseline==='bottom')firstY=y-(lines.length-1)*lineHeight;
+    for(let i=0;i<lines.length;i++)ctx.fillText(lines[i],x,firstY+i*lineHeight,width||undefined);
+  }
+  function drawItem(item) {
+    const o=item.options||{}, a=item.coords||[], type=String(item.type).toLowerCase();
+    if(o.state==='hidden')return;
+    ctx.save();ctx.globalAlpha=o.stipple ? 0.45 : 1;ctx.lineWidth=Number(o.width)||1;ctx.strokeStyle=color(o.outline,'transparent');ctx.fillStyle=color(o.fill,'transparent');
+    if(o.dash)ctx.setLineDash(Array.isArray(o.dash)?o.dash:[6,4]);
+    if(type==='rectangle'){
+      const x=Math.min(a[0],a[2]),y=Math.min(a[1],a[3]),w=Math.abs(a[2]-a[0]),h=Math.abs(a[3]-a[1]);
+      if(o.fill)ctx.fillRect(x,y,w,h);if(o.outline)ctx.strokeRect(x,y,w,h);
+    }else if(type==='oval'){
+      const x=(a[0]+a[2])/2,y=(a[1]+a[3])/2,rx=Math.abs(a[2]-a[0])/2,ry=Math.abs(a[3]-a[1])/2;
+      ctx.beginPath();ctx.ellipse(x,y,Math.max(.1,rx),Math.max(.1,ry),0,0,Math.PI*2);if(o.fill)ctx.fill();if(o.outline)ctx.stroke();
+    }else if(type==='line'){
+      if(a.length>=4){ctx.beginPath();ctx.moveTo(a[0],a[1]);for(let i=2;i<a.length;i+=2)ctx.lineTo(a[i],a[i+1]);ctx.strokeStyle=color(o.fill,'#eee');ctx.lineCap=o.capstyle==='round'?'round':'butt';ctx.lineJoin=o.joinstyle==='round'?'round':'miter';ctx.stroke();
+        const drawArrow=(x0,y0,x1,y1)=>{const ang=Math.atan2(y1-y0,x1-x0),len=Math.max(8,ctx.lineWidth*3);ctx.beginPath();ctx.moveTo(x1,y1);ctx.lineTo(x1-len*Math.cos(ang-.42),y1-len*Math.sin(ang-.42));ctx.lineTo(x1-len*Math.cos(ang+.42),y1-len*Math.sin(ang+.42));ctx.closePath();ctx.fillStyle=color(o.fill,'#eee');ctx.fill();};
+        if(o.arrow==='last'||o.arrow==='both')drawArrow(a[a.length-4],a[a.length-3],a[a.length-2],a[a.length-1]);if(o.arrow==='first'||o.arrow==='both')drawArrow(a[2],a[3],a[0],a[1]);
+      }
+    }else if(type==='polygon'){
+      if(a.length>=6){ctx.beginPath();ctx.moveTo(a[0],a[1]);for(let i=2;i<a.length;i+=2)ctx.lineTo(a[i],a[i+1]);ctx.closePath();if(o.fill)ctx.fill();if(o.outline)ctx.stroke();}
+    }else if(type==='text'){
+      drawText(item,o,a);
+    }else if(type==='arc'){
+      const [x1,y1,x2,y2]=a,cx=(x1+x2)/2,cy=(y1+y2)/2,rx=Math.abs(x2-x1)/2,ry=Math.abs(y2-y1)/2;
+      const start=-(Number(o.start)||0)*Math.PI/180,end=-(Number(o.start||0)+Number(o.extent||90))*Math.PI/180,style=o.style||'pieslice';
+      ctx.beginPath();if(style==='pieslice')ctx.moveTo(cx,cy);else ctx.moveTo(cx+Math.cos(start)*rx,cy+Math.sin(start)*ry);
+      const steps=Math.max(8,Math.ceil(Math.abs(end-start)*16));for(let i=0;i<=steps;i++){const t=start+(end-start)*i/steps;ctx.lineTo(cx+Math.cos(t)*rx,cy+Math.sin(t)*ry);}
+      if(style==='pieslice'||style==='chord')ctx.closePath();if(style!=='arc'&&o.fill)ctx.fill();if(o.outline)ctx.stroke();
+    }else if(type==='image'){
+      const img=images.get(o.image_id);if(img&&a.length>=2){const [x,y]=a,anchor=String(o.anchor||'center').toLowerCase();let dx=x,dy=y;if(anchor.includes('n')){}else if(anchor.includes('s'))dy-=img.height;else dy-=img.height/2;if(anchor.includes('w')){}else if(anchor.includes('e'))dx-=img.width;else dx-=img.width/2;ctx.drawImage(img,dx,dy);}
+    }
+    ctx.restore();
+  }
+  window.gameBridge = {
+    registerImage(id,width,height,payload){
+      const data=JSON.parse(payload),off=document.createElement('canvas');off.width=width;off.height=height;
+      const ictx=off.getContext('2d'),imageData=ictx.createImageData(width,height);
+      for(let y=0;y<height;y++)for(let x=0;x<width;x++){
+        const px=data[y]?.[x],i=(y*width+x)*4;
+        if(!px){imageData.data[i+3]=0;continue;}
+        let r=0,g=0,b=0,a=255;
+        if(px[0]==='#'){
+          let h=px.slice(1);if(h.length===3)h=h.split('').map(c=>c+c).join('');if(h.length===8)a=parseInt(h.slice(6,8),16);r=parseInt(h.slice(0,2),16)||0;g=parseInt(h.slice(2,4),16)||0;b=parseInt(h.slice(4,6),16)||0;
+        }
+        imageData.data[i]=r;imageData.data[i+1]=g;imageData.data[i+2]=b;imageData.data[i+3]=a;
+      }
+      ictx.putImageData(imageData,0,0);images.set(id,off);
+    },
+    renderFrame(payload){
+      const items=JSON.parse(payload);ctx.clearRect(0,0,canvas.width,canvas.height);ctx.imageSmoothingEnabled=false;
+      for(const item of items)drawItem(item);
+      loading.style.display='none';
+    },
+    setMusic(enabled,volume){
+      audio.volume=Math.max(0,Math.min(1,volume));audioRequested=enabled;
+      if(!enabled){audio.pause();return;}
+      if(audioUnlocked&&audio.paused)audio.play().catch(()=>{});
+    },
+    isFullscreen(){return !!document.fullscreenElement||document.documentElement.classList.contains('fullscreen');},
+    setFullscreen(enabled){
+      if(enabled){document.documentElement.classList.add('fullscreen');document.documentElement.requestFullscreen?.().catch(()=>{});}
+      else{document.documentElement.classList.remove('fullscreen');if(document.fullscreenElement)document.exitFullscreen?.().catch(()=>{});}
+    },
+    showError(text){errorBox.textContent=String(text);errorBox.style.display='block';loading.style.display='none';status.textContent='Python 실행 오류';},
+    setStatus(text){status.textContent=String(text);}
+  };
+
+  const keyNames={' ':'space','ArrowLeft':'left','ArrowRight':'right','ArrowUp':'up','ArrowDown':'down','Escape':'escape','Enter':'return','F11':'f11'};
+  const heldKeys=new Set();
+  let frameFn=null,keyFn=null,gameFocused=false;
+  function normalKey(key){return keyNames[key]||String(key).toLowerCase();}
+  function dispatch(type,key){
+    if(!keyFn)return;
+    const normalized=normalKey(key);
+    if(type==='keyDown'){
+      if(heldKeys.has(normalized))return;
+      heldKeys.add(normalized);
+    }else heldKeys.delete(normalized);
+    try{keyFn(normalized,type==='keyDown');}
+    catch(error){window.gameBridge.showError(error?.stack||error);}
+  }
+  function releaseHeldKeys(){
+    for(const key of heldKeys)try{if(keyFn)keyFn(key,false);}catch(_error){}
+    heldKeys.clear();
+  }
+  function focusGame(){
+    if(document.hidden)return;
+    gameFocused=true;
+    canvas.focus({preventScroll:true});
+    lastGameFrameTime=performance.now();
+    gameFrameAccumulator=0;
+    unlockAudio();
+  }
+  function pauseGame(){
+    gameFocused=false;
+    releaseHeldKeys();
+    gameFrameAccumulator=0;
+  }
+  window.addEventListener('keydown',e=>{
+    const key=normalKey(e.key);
+    if(['left','right','up','down','space','f11'].includes(key))e.preventDefault();
+    if(!gameFocused)return;
+    dispatch('keyDown',e.key);
+    unlockAudio();
+  },{passive:false,capture:true});
+  window.addEventListener('keyup',e=>dispatch('keyUp',e.key),true);
+  function unlockAudio(){if(audioUnlocked)return;audioUnlocked=true;if(audioRequested)audio.play().catch(()=>{});}
+
+  function driveGameFrame(timestamp){
+    if(!frameFn)return;
+    if(lastGameFrameTime===null)lastGameFrameTime=timestamp;
+    if(gameFocused&&!document.hidden){
+      gameFrameAccumulator+=Math.min(100,Math.max(0,timestamp-lastGameFrameTime));
+      const steps=Math.min(6,Math.floor(gameFrameAccumulator/(1000/60)));
+      if(steps){
+        gameFrameAccumulator-=steps*(1000/60);
+        try{frameFn(steps);}
+        catch(error){window.gameBridge.showError(error?.stack||error);return;}
+      }
+    }else gameFrameAccumulator=0;
+    lastGameFrameTime=timestamp;
+    gameFrameRequest=window.requestAnimationFrame(driveGameFrame);
+  }
+  canvas.addEventListener('pointerdown',focusGame,{passive:true});
+  window.addEventListener('blur',pauseGame);
+  window.addEventListener('focus',()=>{if(!document.hidden)focusGame();});
+  document.addEventListener('visibilitychange',()=>document.hidden?pauseGame():focusGame());
+  document.querySelectorAll('.touch-key').forEach(button=>{
+    const key=button.dataset.key;
+    const down=e=>{e.preventDefault();button.setPointerCapture?.(e.pointerId);focusGame();dispatch('keyDown',key);};
+    const up=e=>{e.preventDefault();dispatch('keyUp',key);};
+    button.addEventListener('pointerdown',down);
+    button.addEventListener('pointerup',up);
+    button.addEventListener('pointercancel',up);
+    button.addEventListener('lostpointercapture',up);
+  });
+  document.getElementById('fullscreen').addEventListener('click',()=>window.gameBridge.setFullscreen(!window.gameBridge.isFullscreen()));
+
+  async function fetchGameFile(file){
+    let pagesResponse;
+    try{pagesResponse=await fetch('./'+file,{cache:'no-store'});}
+    catch(error){pagesResponse={ok:false,status:'network error ('+error.message+')'};}
+    if(pagesResponse.ok){
+      const source=await pagesResponse.text();
+      if(!source.trimStart().startsWith('<!doctype')&&!source.trimStart().startsWith('<html'))return source;
+      pagesResponse={ok:false,status:'200 (HTML 응답, 파일 아님)'};
+    }
+    const pagesStatus=pagesResponse.status;
+    const rawUrl='https://raw.githubusercontent.com/kourt331/ganggang/main/'+file;
+    let rawResponse;
+    try{rawResponse=await fetch(rawUrl,{cache:'no-store'});}
+    catch(error){throw new Error(file+' 다운로드 실패: Pages '+pagesStatus+' / 저장소 '+error.message);}
+    if(!rawResponse.ok)throw new Error(file+' 다운로드 실패: Pages '+pagesStatus+' / 저장소 '+rawResponse.status);
+    const source=await rawResponse.text();
+    if(!source.trimStart().startsWith('<!doctype')&&!source.trimStart().startsWith('<html'))return source;
+    throw new Error(file+' 다운로드 실패: Pages와 저장소에서 Python 대신 HTML을 받았습니다.');
+  }
+
+  async function start(){
+    try{
+      status.textContent='Python WebAssembly 실행 환경 준비 중…';
+      if(typeof loadPyodide!=='function')throw new Error('Pyodide 실행 파일을 불러오지 못했습니다. 페이지를 새로고침해 주세요.');
+      pythonRuntime=await loadPyodide();
+      status.textContent='원본 Python 파일 불러오는 중…';
+      const [gameSource,tkSource]=await Promise.all([fetchGameFile('original_game.py'),fetchGameFile('tkinter.py')]);
+      const home='/home/pyodide';
+      pythonRuntime.FS.mkdirTree(home);
+      pythonRuntime.FS.writeFile(home+'/original_game.py',gameSource);
+      pythonRuntime.FS.writeFile(home+'/tkinter.py',tkSource);
+      status.textContent='게임을 초기화하는 중…';
+      const initSource=[
+        'import sys',
+        'from types import SimpleNamespace',
+        'sys.path.insert(0, '+JSON.stringify(home)+')',
+        'import tkinter',
+        'import original_game',
+        '',
+        'def _browser_music_tick(self):',
+        '    if self.closing:',
+        '        return',
+        '    self.root.set_music(self.music_enabled, self.music_volume)',
+        '    self.root.after(700, self.music_tick)',
+        '',
+        'def _browser_start_music(self):',
+        '    self.root.set_music(self.music_enabled, self.music_volume)',
+        '',
+        'def _browser_restart_music(self):',
+        '    self.root.set_music(self.music_enabled, self.music_volume)',
+        '',
+        'def _browser_toggle_music(self):',
+        '    self.music_enabled = not self.music_enabled',
+        '    self.root.set_music(self.music_enabled, self.music_volume)',
+        '',
+        'original_game.PhysicsChronicles.music_tick = _browser_music_tick',
+        'original_game.PhysicsChronicles.start_music = _browser_start_music',
+        'original_game.PhysicsChronicles.restart_music = _browser_restart_music',
+        'original_game.PhysicsChronicles.toggle_music = _browser_toggle_music',
+        'root = tkinter.Tk()',
+        'game = original_game.PhysicsChronicles(root)',
+        'root.canvas.dispatch_configure(1100, 700)',
+        'game.draw()',
+        'root.canvas.flush()',
+        '',
+        'def browser_key(key, down):',
+        '    event = SimpleNamespace(keysym=str(key))',
+        '    (game.key_down if down else game.key_up)(event)',
+        '',
+        'def browser_frame(count):',
+        '    for _ in range(int(count)):',
+        '        game._fixed_update()',
+        '    game.draw()',
+        '    root.canvas.flush()'
+      ].join('\n');
+      await pythonRuntime.runPythonAsync(initSource);
+      frameFn=pythonRuntime.runPython('browser_frame');
+      keyFn=pythonRuntime.runPython('browser_key');
+      status.textContent='준비 완료 · 방향키로 이동';
+      loading.style.display='none';
+      focusGame();
+      gameFrameRequest=window.requestAnimationFrame(driveGameFrame);
+    }catch(error){window.gameBridge.showError(error?.stack||error);}
+  }
+  start();
+})();
+</script>
+</body>
+</html>
