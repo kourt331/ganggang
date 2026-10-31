@@ -101,7 +101,7 @@
   function drawText(item,o,p) {
     const [x,y]=p; ctx.font=parseFont(o.font);ctx.fillStyle=color(o.fill,'#eee');ctx.textAlign='left';ctx.textBaseline='top';
     const anchor=String(o.anchor||'center').toLowerCase();
-    if(anchor.includes('e'))ctx.textAlign='right';else if(!anchor.includes('w'))ctx.textAlign='center';
+    if(['e','ne','se'].includes(anchor))ctx.textAlign='right';     else if(['center','n','s'].includes(anchor))ctx.textAlign='center';
     if(anchor.includes('n'))ctx.textBaseline='top';else if(anchor.includes('s'))ctx.textBaseline='bottom';else ctx.textBaseline='middle';
     const width=Number(o.width)||0;const lines=wrapText(o.text,width);const fontSize=Number(Array.isArray(o.font)?o.font[1]:0)||12;const lineHeight=fontSize*1.22;
     if(lines.length===1){ctx.fillText(lines[0],x,y,width||undefined);return;}
