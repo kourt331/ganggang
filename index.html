@@ -24,7 +24,7 @@
     .touch-group { display:flex; gap:8px; }
     .touch-key { min-width:48px; height:44px; border:1px solid #8b7587; border-radius:12px; color:#f6ead7; background:#282537eF; font-size:16px; font-weight:800; touch-action:none; }
     .touch-key:active { background:#876176; }
-    #fullscreen { border:1px solid #756477; color:#e8d8c6; background:#242231; padding:8px 12px; border-radius:8px; cursor:pointer; }
+    #fullscreen { border:1px solid #756477; color:#e8d8c6; background:#242231; padding:8px 12px; border-radius:8px; cursor:pointer; }     #start { border:1px solid #a88965; color:#15131a; background:#e4c58b; padding:8px 15px; border-radius:8px; cursor:pointer; font-weight:800; white-space:nowrap; }     #start:disabled { opacity:.55; cursor:wait; }
     .fullscreen { background:#10121b; }
     .fullscreen body { position:fixed; inset:0; padding:0; display:grid; place-items:center; overflow:hidden; }
     .fullscreen header,.fullscreen #controls,.fullscreen #touch { display:none !important; }
@@ -35,7 +35,7 @@
   </style>
 </head>
 <body>
-  <header><h1>PHYSICS CHRONICLES</h1><div id="state">Python 런타임 준비 중…</div><button id="fullscreen" type="button">전체 화면</button></header>
+  <header><h1>PHYSICS CHRONICLES</h1><div id="state">Python 런타임 준비 중…</div><button id="start" type="button" disabled>로딩 중…</button><button id="fullscreen" type="button">전체 화면</button></header>
   <main id="stage-wrap">
     <canvas id="stage" width="1100" height="700" tabindex="0" aria-label="Physics Chronicles"></canvas>
     <div id="loading">PYTHON GAME LOADING · 잠시만 기다려 주세요</div>
@@ -59,11 +59,11 @@
   const ctx = canvas.getContext('2d');
   const loading = document.getElementById('loading');
   const errorBox = document.getElementById('error');
-  const status = document.getElementById('state');
+  const status = document.getElementById('state'); const startButton = document.getElementById('start');
   const audio = document.getElementById('music');
   const images = new Map();
   let pythonRuntime = null;
-  let audioRequested = false, audioUnlocked = false;
+  let audioRequested = false, audioUnlocked = false, gameStarted = false;
   let gameFrameRequest = 0;
   let lastGameFrameTime = null;
   let gameFrameAccumulator = 0;
@@ -194,32 +194,32 @@
     heldKeys.clear();
   }
   function focusGame(){
-    if(document.hidden)return;
+    if(!gameStarted)return;
     gameFocused=true;
     canvas.focus({preventScroll:true});
     lastGameFrameTime=performance.now();
     gameFrameAccumulator=0;
     unlockAudio();
   }
-  function pauseGame(){
+  function startGame(){ if(!gameStarted){gameStarted=true;startButton.textContent='게임 실행 중';status.textContent='실행 중 · 화면을 클릭하면 조작할 수 있습니다';} focusGame(); } function pauseGame(){
     gameFocused=false;
     releaseHeldKeys();
     gameFrameAccumulator=0;
   }
   window.addEventListener('keydown',e=>{
-    const key=normalKey(e.key);
+    const key=keyFromEvent(e);
     if(['left','right','up','down','space','f11'].includes(key))e.preventDefault();
-    if(!gameFocused)return;
-    dispatch('keyDown',e.key);
+    if(!gameStarted)startGame(); if(!gameFocused)focusGame();
+    dispatch('keyDown',key);
     unlockAudio();
   },{passive:false,capture:true});
-  window.addEventListener('keyup',e=>dispatch('keyUp',e.key),true);
+  window.addEventListener('keyup',e=>dispatch('keyUp',keyFromEvent(e)),true); function keyFromEvent(e){const codeMap={ArrowLeft:'left',ArrowRight:'right',ArrowUp:'up',ArrowDown:'down',Space:'space',Escape:'escape',Enter:'return',F11:'f11'}; if(codeMap[e.code])return codeMap[e.code]; if(e.code?.startsWith('Key'))return e.code.slice(3).toLowerCase(); if(e.code?.startsWith('Digit'))return e.code.slice(5); return normalKey(e.key);}
   function unlockAudio(){if(audioUnlocked)return;audioUnlocked=true;if(audioRequested)audio.play().catch(()=>{});}
 
   function driveGameFrame(timestamp){
     if(!frameFn)return;
     if(lastGameFrameTime===null)lastGameFrameTime=timestamp;
-    if(gameFocused&&!document.hidden){
+    if(gameFocused){
       gameFrameAccumulator+=Math.min(100,Math.max(0,timestamp-lastGameFrameTime));
       const steps=Math.min(6,Math.floor(gameFrameAccumulator/(1000/60)));
       if(steps){
@@ -231,13 +231,13 @@
     lastGameFrameTime=timestamp;
     gameFrameRequest=window.requestAnimationFrame(driveGameFrame);
   }
-  canvas.addEventListener('pointerdown',focusGame,{passive:true});
+  canvas.addEventListener('pointerdown',startGame,{passive:true});
   window.addEventListener('blur',pauseGame);
-  window.addEventListener('focus',()=>{if(!document.hidden)focusGame();});
+  window.addEventListener('focus',focusGame);
   document.addEventListener('visibilitychange',()=>document.hidden?pauseGame():focusGame());
   document.querySelectorAll('.touch-key').forEach(button=>{
     const key=button.dataset.key;
-    const down=e=>{e.preventDefault();button.setPointerCapture?.(e.pointerId);focusGame();dispatch('keyDown',key);};
+    const down=e=>{e.preventDefault();button.setPointerCapture?.(e.pointerId);startGame();dispatch('keyDown',key);};
     const up=e=>{e.preventDefault();dispatch('keyUp',key);};
     button.addEventListener('pointerdown',down);
     button.addEventListener('pointerup',up);
