@@ -1,3 +1,4 @@
+
 <!doctype html>
 <html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Physics Chronicles — 원본 웹 실행</title>
 <style>
@@ -35,10 +36,11 @@ function keyUp(e){const k=keyName(e);held.delete(k);if(keyFn)try{keyFn(k,false)}
 function report(e){failed=true;audio.pause();status.textContent='실행 오류가 발생했습니다. 아래 오류 내용을 전달해 주세요.';err.textContent=String(e);console.error(e)}
 window.addEventListener('keydown',keyDown);window.addEventListener('keyup',keyUp);
 function pause(){focused=false;audio.pause();for(const k of held)try{keyFn(k,false)}catch(e){}held.clear();acc=0}
-canvas.onblur=pause;window.addEventListener('blur',pause);document.addEventListener('visibilitychange',()=>{if(document.hidden)pause()});
+function resume(){if(running&&!document.hidden){focused=true;last=performance.now();acc=0}}
+canvas.onblur=pause;window.addEventListener('blur',pause);window.addEventListener('focus',resume);document.addEventListener('visibilitychange',()=>{if(document.hidden)pause();else resume()});
 canvas.onfocus=()=>{focused=true;last=performance.now();if(running)webMusic(true,audio.volume)};
 canvas.onclick=()=>{focused=true;last=performance.now();canvas.focus();if(running)webMusic(true,audio.volume)};
-start.onclick=()=>{running=true;canvas.focus();start.textContent='게임 화면에 포커스';status.textContent='실행 중 · 화면을 벗어나면 일시정지';webMusic(true,audio.volume)};
+start.onclick=()=>{running=true;focused=true;last=performance.now();acc=0;canvas.focus();start.textContent='게임 화면에 포커스';status.textContent='실행 중 · 화면을 벗어나면 일시정지';webMusic(true,audio.volume)};
 function loop(now){if(running&&focused&&!failed){acc+=Math.min((now-last)/1000,.1);const steps=Math.min(6,Math.floor(acc*60));if(steps){acc-=steps/60;try{frameFn(steps)}catch(e){report(e)}}}else acc=0;last=now;requestAnimationFrame(loop)}
 (async()=>{try{py=await loadPyodide();status.textContent='원본 Python 게임과 그래픽을 준비하고 있습니다…';for(const file of ['original_game.py','web_adapter.py']){const r=await fetch(file);if(!r.ok)throw Error(file+' 다운로드 실패: '+r.status);py.FS.writeFile(file,await r.text())}await py.runPythonAsync('import web_adapter\nweb_adapter.init_game()\nweb_adapter.web_frame(0)');frameFn=py.runPython('web_adapter.web_frame');keyFn=py.runPython('web_adapter.web_key');start.disabled=false;start.textContent='게임 시작 / 음악 켜기';status.textContent='준비 완료 · 시작 버튼을 누르세요';requestAnimationFrame(loop)}catch(e){report(e)}})();
 </script></body></html>
