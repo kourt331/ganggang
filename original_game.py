@@ -2,7 +2,7 @@
 
 Run: python3 physics_chronicles.py
 Controls: Left/Right move (double-tap within 0.2 s to dash), C double jump,
-Down+C drop through, Z dash, A sword/staff, V blessing skill, F hand cannon/meteor,
+Down+C drop through, Z dash, X sword/staff, V blessing skill, F hand cannon/meteor,
 B buy staff, Space parry, Q/W/E physics skills.
 M opens settings, F11 fullscreen, Esc windowed mode.
 """
@@ -66,7 +66,7 @@ RANGED_MOBS = {"부력 장치병", "투석기 수호병", "낙하 장치병", "�
 
 DEFAULT_CONTROLS = {
     "move_left": "left", "move_right": "right", "jump": "c", "drop": "down",
-    "dash": "z", "attack": "a", "parry": "space", "ranged": "f",
+    "dash": "z", "attack": "x", "parry": "space", "ranged": "f",
     "interact": "up", "skill_q": "q", "skill_w": "w", "skill_e": "e",
     "blessing": "v", "stats": "i", "shop_staff": "b",
 }

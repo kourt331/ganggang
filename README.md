@@ -2,7 +2,7 @@
 
 This package runs the Python/Tkinter game in a browser with its original Python gameplay logic and a Canvas renderer. The page uses Pyodide 0.27.7 and a small Tkinter compatibility layer. It waits for **게임 시작** before advancing the simulation. Keyboard letters are read by physical key position, so they work with a Korean keyboard layout.
 
-Default controls: **←/→** move (tap the same direction twice within 0.2 seconds to dash), **C** jump/double jump, **Z** dash, **A** basic attack, **Space** parry, **F** ranged attack, **↑** interact, **M** settings, and **I** stats. Settings allow remapping, restoring defaults, and adjusting music and attack sound volume.
+Default controls: **←/→** move (tap the same direction twice within 0.2 seconds to dash), **C** jump/double jump, **Z** dash, **X** basic attack, **Space** parry, **F** ranged attack, **↑** interact, **M** settings, and **I** stats. Settings allow remapping, restoring defaults, and adjusting music and attack sound volume.
 
 ## Publish
 
