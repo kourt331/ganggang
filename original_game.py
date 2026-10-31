@@ -39,7 +39,7 @@ ROOF_TOP = 142
 ROOF_BOTTOM = 182
 PIT_DEPTH = 92
 DIRECTIONAL_DASH_WINDOW = .24
-DASH_COOLDOWN_FRAMES = 12
+DASH_COOLDOWN_FRAMES = 18
 EXIT_DOOR_PIT_CLEARANCE = 240
 PX = 1.0
 PLAYER_W, PLAYER_H = 32, 56
@@ -1886,7 +1886,6 @@ class PhysicsChronicles:
             self.shake_strength = max(self.shake_strength, 5)
             self.shake_until = max(self.shake_until, self.frame + 9)
             self.effects.append(["parry", self.player["x"] + PLAYER_W / 2, self.player["y"] + PLAYER_H / 2, 16])
-            self.say("패링 성공!")
             return
         if self.frame < self.invulnerable or self.frame < self.dash_until:
             return
