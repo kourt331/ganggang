@@ -1,7 +1,7 @@
 """Physics Chronicles: a small three-era pixel-art action prototype.
 
 Run: python3 physics_chronicles.py
-Controls: Left/Right move (double-tap within 0.2 s to dash), C double jump,
+Controls: Left/Right move (double-tap within 0.24 s to dash), C double jump,
 Down+C drop through, Z dash, X sword/staff, V blessing skill, F hand cannon/meteor,
 B buy staff, Space parry, Q/W/E physics skills.
 M opens settings, F11 fullscreen, Esc windowed mode.
@@ -38,6 +38,9 @@ WORLD_H = 1360
 ROOF_TOP = 142
 ROOF_BOTTOM = 182
 PIT_DEPTH = 92
+DIRECTIONAL_DASH_WINDOW = .24
+DASH_COOLDOWN_FRAMES = 12
+EXIT_DOOR_PIT_CLEARANCE = 240
 PX = 1.0
 PLAYER_W, PLAYER_H = 32, 56
 PLAYER_SPRITE_W, PLAYER_SPRITE_H = 40, 60
@@ -593,6 +596,22 @@ class PhysicsChronicles:
                 return index, pit
         return None, None
 
+    def safe_exit_door_x(self, desired_x):
+        """Keep the round exit and nearby bird on safe ground beside spike pits."""
+        min_x, max_x = 420, WORLD - 120
+        clearance = EXIT_DOOR_PIT_CLEARANCE
+        candidates = [min_x, max_x]
+        for pit in self.pits:
+            candidates.extend((pit["left"] - clearance,
+                               pit["right"] + clearance))
+        candidates = [max(min_x, min(max_x, x)) for x in candidates]
+        safe = [x for x in candidates
+                if all(x <= pit["left"] - clearance
+                       or x >= pit["right"] + clearance for pit in self.pits)]
+        if not safe:
+            return max(min_x, min(max_x, desired_x))
+        return min(safe, key=lambda x: abs(x - desired_x))
+
     def refresh_obstacles(self):
         self.obstacles = list(self.static_obstacles)
         if self.gate_obstacle is not None:
@@ -934,7 +953,8 @@ class PhysicsChronicles:
         move_right = self.controls["move_right"]
         if key in (move_left, move_right):
             now = time.perf_counter()
-            if key == self.last_move_tap_key and now - self.last_move_tap_at <= 0.2:
+            if (key == self.last_move_tap_key
+                    and now - self.last_move_tap_at <= DIRECTIONAL_DASH_WINDOW):
                 self.dash(-1 if key == move_left else 1)
                 self.last_move_tap_key = None
                 self.last_move_tap_at = 0.0
@@ -1699,7 +1719,7 @@ class PhysicsChronicles:
         self.player_action, self.player_action_until = "dash", self.frame + 10
         self.effects.append(["dash", old_x + direction * 118, p["y"] + PLAYER_H / 2, 12, direction])
         self.dash_until = self.frame + 10
-        self.dash_cd = self.frame + self.cooldown_frames(24)
+        self.dash_cd = self.frame + self.cooldown_frames(DASH_COOLDOWN_FRAMES)
 
     def parry(self):
         if self.frame < self.parry_cd or self.game_over or self.finished or self.transition:
@@ -2615,7 +2635,8 @@ class PhysicsChronicles:
         if (self.waves_complete and not self.round_clear and not self.enemies
                 and not self.spawn_queue and not self.game_over and not self.finished):
             self.round_clear = True
-            self.exit_door_x = min(max(self.player["x"] + 300, 420), WORLD - 120)
+            desired_door_x = min(max(self.player["x"] + 300, 420), WORLD - 120)
+            self.exit_door_x = self.safe_exit_door_x(desired_door_x)
             self.bird_x = max(120, self.exit_door_x - 112)
             self.bird_menu = False
             self.notice_until = self.frame
