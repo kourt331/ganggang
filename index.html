@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#11131d">
+  <title>Physics Chronicles</title>
+  <script src="https://cdn.jsdelivr.net/pyodide/v314.0.7/full/pyodide.js"></script>
+  <style>
+    :root { color-scheme: dark; font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background:#10121b; color:#f4eadb; }
+    * { box-sizing:border-box; }
+    html,body { margin:0; min-height:100%; background:radial-gradient(ellipse at 50% -20%, #373044 0%, #171824 54%, #10121b 100%); }
+    body { padding:18px 16px 20px; }
+    header { width:min(100%,1100px); margin:0 auto 10px; display:flex; align-items:center; justify-content:space-between; gap:16px; }
+    h1 { margin:0; color:#f3dfbd; font-size:clamp(18px,2.4vw,26px); letter-spacing:.08em; }
+    #state { color:#c6b9bd; font-size:13px; text-align:right; }
+    #stage-wrap { width:min(100%,1100px); margin:0 auto; position:relative; border:1px solid #6d5b6c; border-radius:10px; overflow:hidden; background:#090d16; box-shadow:0 16px 52px #05060bbb; }
+    #stage { display:block; width:100%; height:auto; aspect-ratio:11/7; image-rendering:pixelated; outline:none; touch-action:none; }
+    #loading { position:absolute; inset:0; display:grid; place-items:center; background:#11131d; color:#f3dfbd; font-size:16px; letter-spacing:.04em; z-index:4; }
+    #error { display:none; position:absolute; inset:0; overflow:auto; padding:28px; background:#1b1118f2; color:#ffd9d0; white-space:pre-wrap; z-index:5; font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; }
+    #controls { width:min(100%,1100px); margin:10px auto 0; color:#c8bec9; display:flex; flex-wrap:wrap; gap:7px 15px; justify-content:center; font-size:12px; }
+    #controls b { color:#f0d294; font-weight:700; }
+    #touch { width:min(100%,1100px); margin:12px auto 0; display:none; justify-content:space-between; gap:16px; touch-action:none; user-select:none; }
+    .touch-group { display:flex; gap:8px; }
+    .touch-key { min-width:48px; height:44px; border:1px solid #8b7587; border-radius:12px; color:#f6ead7; background:#282537eF; font-size:16px; font-weight:800; touch-action:none; }
+    .touch-key:active { background:#876176; }
+    #fullscreen { border:1px solid #756477; color:#e8d8c6; background:#242231; padding:8px 12px; border-radius:8px; cursor:pointer; }
+    .fullscreen { background:#10121b; }
+    .fullscreen body { position:fixed; inset:0; padding:0; display:grid; place-items:center; overflow:hidden; }
+    .fullscreen header,.fullscreen #controls,.fullscreen #touch { display:none !important; }
+    .fullscreen #stage-wrap { width:min(100vw,157vh); border:0; border-radius:0; box-shadow:none; }
+    .fullscreen #stage { width:100%; }
+    @media (pointer:coarse) { #touch { display:flex; } }
+    @media (max-width:620px) { body { padding:10px 7px 12px; } header { padding:0 5px; } #state { font-size:11px; } .touch-key { min-width:40px; height:40px; } #controls { font-size:10px; gap:5px 9px; } }
+  </style>
+</head>
+<body>
+  <header><h1>PHYSICS CHRONICLES</h1><div id="state">Python 런타임 준비 중…</div><button id="fullscreen" type="button">전체 화면</button></header>
+  <main id="stage-wrap">
+    <canvas id="stage" width="1100" height="700" tabindex="0" aria-label="Physics Chronicles"></canvas>
+    <div id="loading">PYTHON GAME LOADING · 잠시만 기다려 주세요</div>
+    <pre id="error"></pre>
+  </main>
+  <div id="controls">
+    <span><b>←/→</b> 이동</span><span><b>C</b> 점프·더블 점프</span><span><b>Z</b> 구르기</span>
+    <span><b>X</b> 검</span><span><b>Space</b> 패링</span><span><b>F</b> 원거리</span><span><b>M</b> 설정</span>
+    <span>문·대화는 게임 내 안내 키</span>
+  </div>
+  <div id="touch" aria-label="터치 조작">
+    <div class="touch-group"><button class="touch-key" data-key="ArrowLeft">◀</button><button class="touch-key" data-key="ArrowRight">▶</button></div>
+    <div class="touch-group"><button class="touch-key" data-key="c">점프</button><button class="touch-key" data-key="z">구르기</button><button class="touch-key" data-key="x">검</button><button class="touch-key" data-key=" ">패링</button></div>
+  </div>
+  <audio id="music" src="./physics_chronicles.wav" preload="auto" loop></audio>
+
+<script>
+(() => {
+  'use strict';
+  const canvas = document.getElementById('stage');
+  const ctx = canvas.getContext('2d');
+  const loading = document.getElementById('loading');
+  const errorBox = document.getElementById('error');
+  const status = document.getElementById('state');
+  const audio = document.getElementById('music');
+  const images = new Map();
+  let audioRequested = false, audioUnlocked = false;
+  ctx.imageSmoothingEnabled = false;
+
+  function color(value, fallback='transparent') { return value && value !== 'None' ? value : fallback; }
+  function parseFont(value) {
+    if (!Array.isArray(value)) return value || '12px system-ui';
+    const size = Number(value[1]) || 12;
+    const styles = value.slice(2).map(x => String(x).toLowerCase());
+    const weight = styles.includes('bold') ? '700' : '400';
+    const italic = styles.includes('italic') ? 'italic ' : '';
+    return `${italic}${weight} ${size}px system-ui, sans-serif`;
+  }
+  function anchorPoint(x1,y1,x2,y2,anchor) {
+    const a = String(anchor || 'center').toLowerCase();
+    const x = a.includes('w') ? x1 : a.includes('e') ? x2 : (x1+x2)/2;
+    const y = a.includes('n') ? y1 : a.includes('s') ? y2 : (y1+y2)/2;
+    return [x,y];
+  }
+  function wrapText(text, maxWidth) {
+    const result=[];
+    for (const paragraph of String(text ?? '').split('\n')) {
+      if (!maxWidth) { result.push(paragraph); continue; }
+      let line='';
+      for (const word of paragraph.split(/\s+/)) {
+        const next=line ? `${line} ${word}` : word;
+        if (line && ctx.measureText(next).width>maxWidth) { result.push(line); line=word; }
+        else line=next;
+      }
+      result.push(line);
+    }
+    return result;
+  }
+  function drawText(item,o,p) {
+    const [x,y]=p; ctx.font=parseFont(o.font);ctx.fillStyle=color(o.fill,'#eee');ctx.textAlign='left';ctx.textBaseline='top';
+    const anchor=String(o.anchor||'center').toLowerCase();
+    if(anchor.includes('e'))ctx.textAlign='right';else if(!anchor.includes('w'))ctx.textAlign='center';
+    if(anchor.includes('n'))ctx.textBaseline='top';else if(anchor.includes('s'))ctx.textBaseline='bottom';else ctx.textBaseline='middle';
+    const width=Number(o.width)||0;const lines=wrapText(o.text,width);const fontSize=Number(Array.isArray(o.font)?o.font[1]:0)||12;const lineHeight=fontSize*1.22;
+    if(lines.length===1){ctx.fillText(lines[0],x,y,width||undefined);return;}
+    let firstY=y;
+    if(ctx.textBaseline==='middle')firstY=y-(lines.length-1)*lineHeight/2;
+    else if(ctx.textBaseline==='bottom')firstY=y-(lines.length-1)*lineHeight;
+    for(let i=0;i<lines.length;i++)ctx.fillText(lines[i],x,firstY+i*lineHeight,width||undefined);
+  }
+  function drawItem(item) {
+    const o=item.options||{}, a=item.coords||[], type=String(item.type).toLowerCase();
+    if(o.state==='hidden')return;
+    ctx.save();ctx.globalAlpha=o.stipple ? 0.45 : 1;ctx.lineWidth=Number(o.width)||1;ctx.strokeStyle=color(o.outline,'transparent');ctx.fillStyle=color(o.fill,'transparent');
+    if(o.dash)ctx.setLineDash(Array.isArray(o.dash)?o.dash:[6,4]);
+    if(type==='rectangle'){
+      const x=Math.min(a[0],a[2]),y=Math.min(a[1],a[3]),w=Math.abs(a[2]-a[0]),h=Math.abs(a[3]-a[1]);
+      if(o.fill)ctx.fillRect(x,y,w,h);if(o.outline)ctx.strokeRect(x,y,w,h);
+    }else if(type==='oval'){
+      const x=(a[0]+a[2])/2,y=(a[1]+a[3])/2,rx=Math.abs(a[2]-a[0])/2,ry=Math.abs(a[3]-a[1])/2;
+      ctx.beginPath();ctx.ellipse(x,y,Math.max(.1,rx),Math.max(.1,ry),0,0,Math.PI*2);if(o.fill)ctx.fill();if(o.outline)ctx.stroke();
+    }else if(type==='line'){
+      if(a.length>=4){ctx.beginPath();ctx.moveTo(a[0],a[1]);for(let i=2;i<a.length;i+=2)ctx.lineTo(a[i],a[i+1]);ctx.strokeStyle=color(o.fill,'#eee');ctx.lineCap=o.capstyle==='round'?'round':'butt';ctx.lineJoin=o.joinstyle==='round'?'round':'miter';ctx.stroke();
+        const drawArrow=(x0,y0,x1,y1)=>{const ang=Math.atan2(y1-y0,x1-x0),len=Math.max(8,ctx.lineWidth*3);ctx.beginPath();ctx.moveTo(x1,y1);ctx.lineTo(x1-len*Math.cos(ang-.42),y1-len*Math.sin(ang-.42));ctx.lineTo(x1-len*Math.cos(ang+.42),y1-len*Math.sin(ang+.42));ctx.closePath();ctx.fillStyle=color(o.fill,'#eee');ctx.fill();};
+        if(o.arrow==='last'||o.arrow==='both')drawArrow(a[a.length-4],a[a.length-3],a[a.length-2],a[a.length-1]);if(o.arrow==='first'||o.arrow==='both')drawArrow(a[2],a[3],a[0],a[1]);
+      }
+    }else if(type==='polygon'){
+      if(a.length>=6){ctx.beginPath();ctx.moveTo(a[0],a[1]);for(let i=2;i<a.length;i+=2)ctx.lineTo(a[i],a[i+1]);ctx.closePath();if(o.fill)ctx.fill();if(o.outline)ctx.stroke();}
+    }else if(type==='text'){
+      drawText(item,o,a);
+    }else if(type==='arc'){
+      const [x1,y1,x2,y2]=a,cx=(x1+x2)/2,cy=(y1+y2)/2,rx=Math.abs(x2-x1)/2,ry=Math.abs(y2-y1)/2;
+      const start=-(Number(o.start)||0)*Math.PI/180,end=-(Number(o.start||0)+Number(o.extent||90))*Math.PI/180,style=o.style||'pieslice';
+      ctx.beginPath();if(style==='pieslice')ctx.moveTo(cx,cy);else ctx.moveTo(cx+Math.cos(start)*rx,cy+Math.sin(start)*ry);
+      const steps=Math.max(8,Math.ceil(Math.abs(end-start)*16));for(let i=0;i<=steps;i++){const t=start+(end-start)*i/steps;ctx.lineTo(cx+Math.cos(t)*rx,cy+Math.sin(t)*ry);}
+      if(style==='pieslice'||style==='chord')ctx.closePath();if(style!=='arc'&&o.fill)ctx.fill();if(o.outline)ctx.stroke();
+    }else if(type==='image'){
+      const img=images.get(o.image_id);if(img&&a.length>=2){const [x,y]=a,anchor=String(o.anchor||'center').toLowerCase();let dx=x,dy=y;if(anchor.includes('n')){}else if(anchor.includes('s'))dy-=img.height;else dy-=img.height/2;if(anchor.includes('w')){}else if(anchor.includes('e'))dx-=img.width;else dx-=img.width/2;ctx.drawImage(img,dx,dy);}
+    }
+    ctx.restore();
+  }
+  window.gameBridge = {
+    registerImage(id,width,height,payload){
+      const data=JSON.parse(payload),off=document.createElement('canvas');off.width=width;off.height=height;
+      const ictx=off.getContext('2d'),imageData=ictx.createImageData(width,height);
+      for(let y=0;y<height;y++)for(let x=0;x<width;x++){
+        const px=data[y]?.[x],i=(y*width+x)*4;
+        if(!px){imageData.data[i+3]=0;continue;}
+        let r=0,g=0,b=0,a=255;
+        if(px[0]==='#'){
+          let h=px.slice(1);if(h.length===3)h=h.split('').map(c=>c+c).join('');if(h.length===8)a=parseInt(h.slice(6,8),16);r=parseInt(h.slice(0,2),16)||0;g=parseInt(h.slice(2,4),16)||0;b=parseInt(h.slice(4,6),16)||0;
+        }
+        imageData.data[i]=r;imageData.data[i+1]=g;imageData.data[i+2]=b;imageData.data[i+3]=a;
+      }
+      ictx.putImageData(imageData,0,0);images.set(id,off);
+    },
+    renderFrame(payload){
+      const items=JSON.parse(payload);ctx.clearRect(0,0,canvas.width,canvas.height);ctx.imageSmoothingEnabled=false;
+      for(const item of items)drawItem(item);
+      loading.style.display='none';
+    },
+    setMusic(enabled,volume){
+      audio.volume=Math.max(0,Math.min(1,volume));audioRequested=enabled;
+      if(!enabled){audio.pause();return;}
+      if(audioUnlocked&&audio.paused)audio.play().catch(()=>{});
+    },
+    isFullscreen(){return !!document.fullscreenElement||document.documentElement.classList.contains('fullscreen');},
+    setFullscreen(enabled){
+      if(enabled){document.documentElement.classList.add('fullscreen');document.documentElement.requestFullscreen?.().catch(()=>{});}
+      else{document.documentElement.classList.remove('fullscreen');if(document.fullscreenElement)document.exitFullscreen?.().catch(()=>{});}
+    },
+    showError(text){errorBox.textContent=String(text);errorBox.style.display='block';loading.style.display='none';status.textContent='Python 실행 오류';},
+    setStatus(text){status.textContent=String(text);}
+  };
+
+  const keyNames={' ':'space','ArrowLeft':'left','ArrowRight':'right','ArrowUp':'up','ArrowDown':'down','Escape':'escape','Enter':'return','F11':'f11'};
+  function normalKey(key){return keyNames[key]||key.toLowerCase();}
+  function dispatch(type,key){if(!window.browserGame)return;window.browserGame[type](normalKey(key));}
+  window.addEventListener('keydown',e=>{
+    const key=normalKey(e.key);if(['left','right','up','down','space','f11'].includes(key))e.preventDefault();
+    dispatch('keyDown',e.key);unlockAudio();
+  },{passive:false});
+  window.addEventListener('keyup',e=>dispatch('keyUp',e.key));
+  function unlockAudio(){if(audioUnlocked)return;audioUnlocked=true;if(audioRequested)audio.play().catch(()=>{});}
+  document.addEventListener('pointerdown',()=>{canvas.focus({preventScroll:true});unlockAudio();},{passive:true});
+  document.querySelectorAll('.touch-key').forEach(button=>{
+    const key=button.dataset.key;const down=e=>{e.preventDefault();button.setPointerCapture?.(e.pointerId);dispatch('keyDown',key);unlockAudio();};const up=e=>{e.preventDefault();dispatch('keyUp',key);};
+    button.addEventListener('pointerdown',down);button.addEventListener('pointerup',up);button.addEventListener('pointercancel',up);button.addEventListener('lostpointercapture',up);
+  });
+  document.getElementById('fullscreen').addEventListener('click',()=>window.gameBridge.setFullscreen(!window.gameBridge.isFullscreen()));
+
+  async function start(){
+    try{
+      status.textContent='Python 3.14 WebAssembly 준비 중…';
+      const pyodide=await loadPyodide();
+      status.textContent='원본 Python 파일 불러오는 중…';
+      const [gameResponse,tkResponse]=await Promise.all([fetch('./original_game.py'),fetch('./tkinter.py')]);
+      if(!gameResponse.ok||!tkResponse.ok)throw new Error('GitHub Pages에서 original_game.py 또는 tkinter.py를 찾지 못했습니다. 파일을 저장소 루트에 올려 주세요.');
+      const gameSource=await gameResponse.text(),tkSource=await tkResponse.text();
+      const home='/home/pyodide';pyodide.FS.mkdirTree(home);
+      pyodide.FS.writeFile(`${home}/original_game.py`,gameSource);
+      pyodide.FS.writeFile(`${home}/tkinter.py`,tkSource);
+      status.textContent='게임을 초기화하는 중…';
+      await pyodide.runPythonAsync(`
+import sys
+sys.path.insert(0, ${JSON.stringify(home)})
+import tkinter
+from tkinter import browser_key_down, browser_key_up
+import original_game
+
+def _browser_music_tick(self):
+    if self.closing:
+        return
+    self.root.set_music(self.music_enabled, self.music_volume)
+    self.root.after(700, self.music_tick)
+
+def _browser_start_music(self):
+    self.root.set_music(self.music_enabled, self.music_volume)
+
+def _browser_restart_music(self):
+    self.root.set_music(self.music_enabled, self.music_volume)
+
+def _browser_toggle_music(self):
+    self.music_enabled = not self.music_enabled
+    self.root.set_music(self.music_enabled, self.music_volume)
+
+original_game.PhysicsChronicles.music_tick = _browser_music_tick
+original_game.PhysicsChronicles.start_music = _browser_start_music
+original_game.PhysicsChronicles.restart_music = _browser_restart_music
+original_game.PhysicsChronicles.toggle_music = _browser_toggle_music
+
+root = tkinter.Tk()
+game = original_game.PhysicsChronicles(root)
+root.canvas.dispatch_configure(1100, 700)
+game.draw()
+root.canvas.flush()
+`);
+      const keyDown=pyodide.globals.get('browser_key_down'),keyUp=pyodide.globals.get('browser_key_up');
+      window.browserGame={keyDown,keyUp};
+      status.textContent='원본 Physics Chronicles 실행 중';
+      loading.style.display='none';
+    }catch(error){window.gameBridge.showError(error?.stack||error);}
+  }
+  start();
+})();
+</script>
+</body>
+</html>
