@@ -62,7 +62,7 @@ https://<!doctype html>
   const status = document.getElementById('state');
   const audio = document.getElementById('music');
   const images = new Map();
-  let audioRequested = false, audioUnlocked = false;
+  let audioRequested = false, audioUnlocked = false; let pythonRuntime = null, frameLast = null, frameBank = 0;
   ctx.imageSmoothingEnabled = false;
 
   function color(value, fallback='transparent') { return value && value !== 'None' ? value : fallback; }
@@ -179,7 +179,9 @@ https://<!doctype html>
     dispatch('keyDown',e.key);unlockAudio();
   },{passive:false});
   window.addEventListener('keyup',e=>dispatch('keyUp',e.key));
-  function unlockAudio(){if(audioUnlocked)return;audioUnlocked=true;if(audioRequested)audio.play().catch(()=>{});}
+  function unlockAudio(){if(audioUnlocked)return;audioUnlocked=true;if(audioRequested)audio.play().catch(()=>{});}const driveGameFrame=timestamp=>{if(!pythonRuntime)return;if(frameLast===null)frameLast=timestamp;frameBank+=Math.min(250,Math.max(0,timestamp-frameLast));frameLast=timestamp;let steps=0;while(frameBank>=1000/60&&steps<5){frameBank-=1000/60;steps++;}try{if(steps)pythonRuntime.runPython(`for _ in range(${steps}):
+    game._fixed_update()
+game.draw()`);}catch(error){window.gameBridge.showError(error?.stack||error);return;}requestAnimationFrame(driveGameFrame);};
   document.addEventListener('pointerdown',()=>{canvas.focus({preventScroll:true});unlockAudio();},{passive:true});
   document.querySelectorAll('.touch-key').forEach(button=>{
     const key=button.dataset.key;const down=e=>{e.preventDefault();button.setPointerCapture?.(e.pointerId);dispatch('keyDown',key);unlockAudio();};const up=e=>{e.preventDefault();dispatch('keyUp',key);};
@@ -190,7 +192,7 @@ https://<!doctype html>
   async function start(){
     try{
       status.textContent='Python 3.14 WebAssembly 준비 중…';
-      const pyodide=await loadPyodide();
+      const pyodide=await loadPyodide(); pythonRuntime=pyodide;
       status.textContent='원본 Python 파일 불러오는 중…';
       const [gameResponse,tkResponse]=await Promise.all([fetch('./original_game.py'),fetch('./tkinter.py')]);
       if(!gameResponse.ok||!tkResponse.ok)throw new Error('GitHub Pages에서 original_game.py 또는 tkinter.py를 찾지 못했습니다. 파일을 저장소 루트에 올려 주세요.');
@@ -225,7 +227,7 @@ def _browser_toggle_music(self):
 original_game.PhysicsChronicles.music_tick = _browser_music_tick
 original_game.PhysicsChronicles.start_music = _browser_start_music
 original_game.PhysicsChronicles.restart_music = _browser_restart_music
-original_game.PhysicsChronicles.toggle_music = _browser_toggle_music
+original_game.PhysicsChronicles.toggle_music = _browser_toggle_music; original_game.PhysicsChronicles.tick = lambda self: None
 
 root = tkinter.Tk()
 game = original_game.PhysicsChronicles(root)
@@ -234,7 +236,7 @@ game.draw()
 root.canvas.flush()
 `);
       const keyDown=key=>pyodide.runPython(`browser_key_down(${JSON.stringify(key)})`),keyUp=key=>pyodide.runPython(`browser_key_up(${JSON.stringify(key)})`);
-      window.browserGame={keyDown,keyUp};
+      window.browserGame={keyDown,keyUp};requestAnimationFrame(driveGameFrame);
       status.textContent='원본 Physics Chronicles 실행 중';
       loading.style.display='none';
     }catch(error){window.gameBridge.showError(error?.stack||error);}
