@@ -49,6 +49,7 @@ MOB_HEAL_MAX_FRACTION = 0.20
 MAX_ACTIVE_ENEMIES = 6
 FIXED_STEP_SECONDS = 1 / 60
 MAX_CATCH_UP_STEPS = 8
+BASIC_ATTACK_COMBO_WINDOW = 18  # 0.3 seconds at the fixed 60 Hz simulation rate.
 ERAS = [
     {"place": "SYRACUSE", "age": "ANCIENT GREECE · STONE HARBOR", "boss": "ARCHIMEDES", "scholar": "ERATOSTHENES",
      "sky": "#59446f", "far": "#775b83", "near": "#c47e91", "ground": "#624b65", "accent": "#ffd17e",
@@ -1252,7 +1253,7 @@ class PhysicsChronicles:
         stats_top = boon_top + 110
         c.create_rectangle(inner_left, stats_top, inner_right, top + panel_h - 29,
                            fill="#202c32", outline="#77aaa1", width=1)
-        attack_interval = max(6, int((32 if self.staff_owned else 19)
+        attack_interval = max(6, int((32 if self.staff_owned else 18)
                                      * (1 - self.attack_speed_bonus)))
         stats = (
             f"체력  {self.hp:,} / {self.max_hp:,}       보유 동전  {self.gold:,} G",
@@ -1282,7 +1283,7 @@ class PhysicsChronicles:
 
     def next_basic_attack_cooldown(self, base_frames):
         if (self.attack_last_frame is None
-                or self.frame - self.attack_last_frame > 60):
+                or self.frame - self.attack_last_frame > BASIC_ATTACK_COMBO_WINDOW):
             self.attack_combo_count = 1
         else:
             self.attack_combo_count += 1
@@ -1686,9 +1687,8 @@ class PhysicsChronicles:
         if self.staff_owned:
             self.staff_basic_attack()
             return
-        self.play_sfx("sword")
         self.attack_until = self.frame + 20
-        cooldown = self.next_basic_attack_cooldown(19)
+        cooldown = self.next_basic_attack_cooldown(18)
         self.attack_cd = self.frame + cooldown
         self.player_action, self.player_action_until = "slash", self.frame + 20
         self.swing_hits.clear()
@@ -1705,7 +1705,6 @@ class PhysicsChronicles:
         if not targets:
             self.say("중력 공격 범위 안에 적이 없습니다")
             return
-        self.play_sfx("gravity")
         target = min(targets, key=lambda enemy: math.hypot(
             enemy["x"] + enemy["w"] / 2 - px,
             enemy["y"] + enemy["h"] / 2 - py))
@@ -1994,6 +1993,30 @@ class PhysicsChronicles:
             enemy["y"], enemy["vy"], enemy["grounded"] = landing - enemy["h"], 0, True
             if not was_grounded and fall_speed > 8 and enemy["rank"] != "boss":
                 self.effects.append(["landing", enemy["x"] + enemy["w"] / 2, landing, 12])
+
+    def escape_enemy_pit(self, enemy, player_x):
+        pit_id = enemy.get("pit_id")
+        if pit_id is None or pit_id >= len(self.pits):
+            return False
+
+        # Interrupt attacks and prioritize the rim nearest to the player's X.
+        enemy["platform_bounds"] = None
+        enemy["state"], enemy["action"], enemy["timer"] = "idle", "", 18
+        enemy["stagger_delay"], enemy["stagger_steps"] = 0, 0
+        pit = self.pits[pit_id]
+        left_distance = abs(player_x - pit["left"])
+        right_distance = abs(player_x - pit["right"])
+        side = -1 if left_distance <= right_distance else 1
+        enemy["pit_escape_side"] = side
+        enemy["face"] = side
+        rim_x = pit["left"] + 1 if side < 0 else pit["right"] - enemy["w"] - 1
+        delta_to_rim = rim_x - enemy["x"]
+        if abs(delta_to_rim) > 4:
+            enemy["x"] += side * min(3.8, abs(delta_to_rim))
+        elif enemy["grounded"] and enemy.get("jump_cd", 0) <= self.frame:
+            enemy["vy"], enemy["grounded"] = -19.0, False
+            enemy["jump_cd"] = self.frame + 32
+        return True
 
     def begin_warning(self, enemy, action, frames=35):
         is_gun_aim = action in ("crossbow", "fan", "intercept", "gunshot")
@@ -2315,6 +2338,13 @@ class PhysicsChronicles:
             enemy["face"] = 1 if dx >= 0 else -1
             if enemy["hit"]:
                 enemy["hit"] -= 1
+            if enemy["rank"] != "boss":
+                # Physics first lets a fall into a pit interrupt hitstun,
+                # windups, and aiming instead of waiting for those states.
+                self.update_enemy_physics(enemy)
+                if self.escape_enemy_pit(enemy, px):
+                    continue
+                enemy["pit_escape_side"] = None
             if enemy.get("state") == "stagger":
                 if enemy.get("stagger_delay", 0) > 0:
                     enemy["stagger_delay"] -= 1
@@ -2334,38 +2364,6 @@ class PhysicsChronicles:
                 self.update_archimedes_boss(enemy, px, py, dx, dy, dist)
                 continue
             anchored_ranged = enemy["rank"] == "mob" and enemy["kind"] in RANGED_MOBS
-            self.update_enemy_physics(enemy)
-            pit_id = enemy.get("pit_id")
-            if pit_id is not None and pit_id < len(self.pits):
-                # Abandon a ranged perch if an enemy falls into a trench. It
-                # now prioritizes finding the nearest rim and jumping out.
-                enemy["platform_bounds"] = None
-                pit = self.pits[pit_id]
-                player_left_distance = abs(px - pit["left"])
-                player_right_distance = abs(px - pit["right"])
-                player_side = -1 if player_left_distance <= player_right_distance else 1
-                current_side = enemy.get("pit_escape_side")
-                if current_side not in (-1, 1):
-                    enemy["pit_escape_side"] = player_side
-                else:
-                    current_rim = (pit["left"] + 1 if current_side < 0
-                                   else pit["right"] - enemy["w"] - 1)
-                    if player_side != current_side and abs(current_rim - enemy["x"]) > 36:
-                        enemy["pit_escape_side"] = player_side
-                side = enemy["pit_escape_side"]
-                rim_x = pit["left"] + 1 if side < 0 else pit["right"] - enemy["w"] - 1
-                delta_to_rim = rim_x - enemy["x"]
-                enemy["face"] = side
-                if abs(delta_to_rim) > 4:
-                    enemy["x"] += side * min(3.8, abs(delta_to_rim))
-                elif enemy["grounded"] and enemy.get("jump_cd", 0) <= self.frame:
-                    # The shallow trench is below a normal jump's reachable
-                    # height, so trapped grunts can reliably clear its rim.
-                    enemy["vy"], enemy["grounded"] = -19.0, False
-                    enemy["jump_cd"] = self.frame + 32
-                    enemy["state"], enemy["timer"] = "idle", 18
-                continue
-            enemy["pit_escape_side"] = None
             if enemy["rank"] == "mob" and enemy["kind"] in MELEE_MOBS and enemy["state"] == "idle" and dist > 112:
                 enemy["x"] += (1 if dx > 0 else -1) * 2.35
             elif enemy["rank"] == "mob" and enemy["kind"] in RANGED_MOBS and enemy["state"] in ("idle", "cooldown") and abs(dy) < 190:
@@ -3787,6 +3785,7 @@ class PhysicsChronicles:
         x, y = self.sx(enemy["x"]), self.sy(enemy["y"])
         w, h = enemy["w"], enemy["h"]
         rank = enemy["rank"]
+        warning_label_y = y - 52 if y - 52 >= 64 else y + h + 14
         if rank == "boss" and enemy.get("boss_phase") == "normal":
             y -= math.sin(self.frame * .045) * 1.5
         elif rank != "boss" and enemy.get("grounded") and enemy["state"] in ("idle", "cooldown"):
@@ -3837,13 +3836,10 @@ class PhysicsChronicles:
                 self.canvas.create_line(origin_x, origin_y, tx, ty,
                                         fill="#ef9299", width=4, dash=(10, 8),
                                         arrow="last")
-                aim_label = (f"공격까지 {(enemy['timer'] + 18) / 60:.1f}"
-                             if enemy["state"] == "notice"
-                             else f"조준 {enemy['timer'] / 60:.1f}")
-                self.canvas.create_text(tx, ty - 18,
-                                        text=(f"발사까지 {enemy['timer'] / 60:.1f}"
-                                              if enemy["state"] == "locked"
-                                              else aim_label),
+                remaining = (enemy["timer"] + 18 if enemy["state"] == "notice"
+                             else enemy["timer"])
+                self.canvas.create_text(x + w / 2, warning_label_y,
+                                        text=f"{remaining / 60:.1f}s",
                                         fill=alert, font=("TkDefaultFont", 9, "bold"))
             elif enemy["action"] == "slam":
                 target_x = enemy.get("target_x", 0)
@@ -3853,9 +3849,7 @@ class PhysicsChronicles:
                     lane = self.draw_floor_warning_stripe(
                         target_x - 76, target_x + 76,
                         target_y + vertical_limit, alert)
-                    label_x = self.sx(target_x) if lane is None else (lane[0] + lane[1]) / 2
-                    label_y = self.sy(target_y) - 24 if lane is None else lane[2] - 20
-                    c.create_text(label_x, label_y, text=f"{enemy['timer'] / 60:.1f}",
+                    c.create_text(x + w / 2, warning_label_y, text=f"{enemy['timer'] / 60:.1f}s",
                                   fill=alert, font=("TkDefaultFont", 10, "bold"))
                 else:
                     tx, hit_y = self.sx(target_x), self.sy(target_y)
@@ -3879,10 +3873,8 @@ class PhysicsChronicles:
                     lane = self.draw_floor_warning_stripe(
                         zone_world_x1, zone_world_x2, attack_low_y,
                         alert, swing_face)
-                timer_label = (f"공격까지 {enemy['timer'] / 60:.1f}"
-                               if enemy["state"] == "notice"
-                               else f"{enemy['timer'] / 60:.1f}")
-                c.create_text(tx, ty - 90, text=timer_label,
+                timer_label = f"{enemy['timer'] / 60:.1f}s"
+                c.create_text(x + w / 2, warning_label_y, text=timer_label,
                               fill=alert, font=("TkDefaultFont", 10, "bold"))
             elif enemy["action"] in ("column", "fall", "gravity"):
                 tx, ty = self.sx(enemy.get("target_x", 0)), self.sy(enemy.get("target_y", 120))
@@ -4913,11 +4905,17 @@ class PhysicsChronicles:
         parry_status = "PARRY READY" if self.frame >= self.parry_cd else f"PARRY {((self.parry_cd - self.frame) / 60):.1f}s"
         c.create_text(self.w - 20, 56, anchor="se", text=parry_status, fill="#b7f2ce", font=("TkDefaultFont", 8, "bold"))
         if self.scholar_gravity_active():
-            c.create_text(self.w / 2, 66, text="중력장에 붙잡힘 · 이동 속도 감소",
-                          fill="#d9c5ff", font=("TkDefaultFont", 10, "bold"))
+            c.create_text(self.w - 20, 76, anchor="ne",
+                          text="중력장 · 이동 속도 감소",
+                          fill="#d9c5ff", font=("TkDefaultFont", 9, "bold"))
         c.create_text(self.w / 2, self.h - 28, text=ability_text, fill="#e6d49d", font=("TkDefaultFont", 10, "bold"))
-        if self.frame < self.notice_until:
-            c.create_text(self.w / 2, 84, text=self.notice, fill="#fff3d2", font=("TkDefaultFont", 13, "bold"))
+        if self.frame < self.notice_until and not self.transition:
+            notice_y = 169
+            c.create_rectangle(self.w * .16, notice_y - 18, self.w * .84, notice_y + 18,
+                               fill="#151a25", outline="#8a7860", width=1)
+            c.create_text(self.w / 2, notice_y, width=self.w * .64,
+                          text=self.notice, fill="#fff3d2",
+                          font=("TkDefaultFont", 11, "bold"))
         if self.round_clear and self.exit_door_x is not None and abs(self.player["x"] - self.exit_door_x) < 180:
             c.create_text(self.w / 2, 84, text=f"{self.key_label(self.controls['interact'])} 문으로 들어가 다음 방으로", fill="#fff3d2", font=("TkDefaultFont", 13, "bold"))
         if self.round_clear and self.bird_x is not None and abs(self.player["x"] - self.bird_x) < 140:
