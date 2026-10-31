@@ -233,9 +233,6 @@ class PhysicsChronicles:
         self.game_over = False
         self.notice = "세 시대를 지나 물리의 공식을 익히세요"
         self.notice_until = 240
-        self.zone_notice_room = 0
-        self.zone_notice_subtitle = ""
-        self.zone_notice_until = 0
         self.music_path = Path(__file__).with_name("physics_chronicles.wav")
         self.music_process = None
         self.music_mci_alias = "physicschroniclesmusic"
@@ -439,11 +436,11 @@ class PhysicsChronicles:
         self.set_room_gate(0)
         if self.phase == 2:
             self.archimedes_ship_active = False
-            self.say(f"PART {self.chapter + 1} BOSS  /  ROUND {self.round_number}  ·  안전 구역에서 출발")
+            self.notice_until = self.frame
         elif self.phase == 1:
-            self.say(f"SCHOLAR MIDBOSS  /  ROUND {self.round_number}  ·  안전 구역에서 출발")
+            self.notice_until = self.frame
         else:
-            self.say(f"ROUND {self.round_number}  /  PART {self.chapter + 1}  ·  안전 구역에서 출발")
+            self.notice_until = self.frame
 
     def make_room_platforms(self, room):
         """Create reachable air platforms with clear gaps and no overlaps."""
@@ -727,10 +724,7 @@ class PhysicsChronicles:
                 self.midrun_shop_active = True
                 self.room_wave_started = True
                 self.spawn_queue.clear()
-                if self.room_wave_index in self.blessing_events:
-                    self.show_zone_notice(3, "가호 이벤트 · 레버로 출구")
-                else:
-                    self.show_zone_notice(3, "안전 상점 · 레버로 출구")
+                self.notice_until = self.frame
             if self.shop_exit_open and self.player["x"] + PLAYER_W >= SHOP_EXIT_X + 24:
                 self.collect_all_coins()
                 self.room_wave_index += 1
@@ -738,7 +732,7 @@ class PhysicsChronicles:
                 self.shop_exit_open = False
                 self.room_wave_started = False
                 self.set_room_gate(self.room_wave_index)
-                self.show_zone_notice(self.room_wave_index + 1, "상점 통과 · 전투 구역 진입")
+                self.notice_until = self.frame
             return
 
         if self.waves_complete or self.room_wave_index >= len(self.room_waves):
@@ -755,7 +749,7 @@ class PhysicsChronicles:
             grace = self.spawn_grace if self.room_wave_index == 0 else 30
             self.spawn_next_at = self.frame + grace
             if self.room_wave_index == 0:
-                self.show_zone_notice(1, "안전 구역 종료 · 적 접근")
+                self.notice_until = self.frame
 
         # Preserve the complete wave in the queue, releasing one enemy only
         # when fewer than six are active so simultaneous load stays bounded.
@@ -791,8 +785,7 @@ class PhysicsChronicles:
             self.room_wave_index += 1
             self.room_wave_started = False
             self.set_room_gate(self.room_wave_index)
-            subtitle = f"전투 구역 · 동전 {collected} G 회수" if collected else "전투 구역 진입 · 적 접근"
-            self.show_zone_notice(self.room_wave_index + 1, subtitle)
+            self.notice_until = self.frame
 
     def open_midrun_shop_exit(self):
         if not self.midrun_shop_active or self.shop_exit_open:
@@ -1278,11 +1271,23 @@ class PhysicsChronicles:
         self.notice = text
         self.notice_until = self.frame + 180
 
-    def show_zone_notice(self, room_number, subtitle):
-        self.zone_notice_room = max(1, min(ROOM_COUNT, int(room_number)))
-        self.zone_notice_subtitle = subtitle
-        self.zone_notice_until = self.frame + 120
-        self.notice_until = self.frame
+    def current_room_enemy_counts(self):
+        counts = {"mob": 0, "scholar": 0, "boss": 0}
+
+        def add(rank):
+            key = rank if rank in ("scholar", "boss") else "mob"
+            counts[key] += 1
+
+        for enemy in self.enemies:
+            if enemy["hp"] > 0 and enemy["rank"] != "dummy":
+                add(enemy["rank"])
+        for _kind, _x, rank in self.spawn_queue:
+            add(rank)
+        if (not self.room_wave_started and not self.midrun_shop_active
+                and not self.in_shop and self.room_wave_index < len(self.room_waves)):
+            for _kind, _x, rank in self.room_waves[self.room_wave_index]:
+                add(rank)
+        return counts
 
     def cooldown_frames(self, frames):
         return max(1, int(frames))
@@ -2600,7 +2605,7 @@ class PhysicsChronicles:
             self.exit_door_x = min(max(self.player["x"] + 300, 420), WORLD - 120)
             self.bird_x = max(120, self.exit_door_x - 112)
             self.bird_menu = False
-            self.say(f"구역 완수 · 동전 {self.gold} G  /  비둘기에게서 스탯을 강화하세요")
+            self.notice_until = self.frame
 
     def tick(self):
         # Accumulate wall-clock time and update only in exact 1/60 s steps.
@@ -4786,16 +4791,12 @@ class PhysicsChronicles:
         era = ERAS[min(self.chapter, len(ERAS) - 1)]
         c = self.canvas
         c.create_rectangle(0, 0, self.w, 60, fill="#121822", outline="#726c5b", width=2)
-        c.create_text(20, 15, anchor="nw", text=f"ROUND {self.round_number:02d}  /  PART {self.chapter + 1}", fill=era["accent"], font=("TkDefaultFont", 15, "bold"))
-        local_round = (self.round_number - 1) % 8 + 1
+        c.create_text(20, 15, anchor="nw", text=f"PART {self.chapter + 1} / {len(ERAS)}", fill=era["accent"], font=("TkDefaultFont", 15, "bold"))
         phase_name = ("SHOP · SAFE ROOM" if self.midrun_shop_active else
                       "SHOP · TRAINING ROOM" if self.in_shop else
-                      f"ZONE {min(self.room_wave_index + 1, ROOM_COUNT)}/{ROOM_COUNT} · ROUND {local_round}/8"
-                      if self.phase == 0 else
-                      f"SCHOLAR MIDBOSS · ZONE {min(self.room_wave_index + 1, ROOM_COUNT)}/{ROOM_COUNT}"
-                      if self.phase == 1 else
-                      "BOSS ARENA · SOLO" if self.boss_only_round else
-                      f"FORMULA BOSS · ZONE {min(self.room_wave_index + 1, ROOM_COUNT)}/{ROOM_COUNT}")
+                      "BOSS ARENA · SOLO" if self.phase == 2 and self.boss_only_round else
+                      "FORMULA BOSS" if self.phase == 2 else
+                      "SCHOLAR MIDBOSS" if self.phase == 1 else "COMBAT ZONE")
         c.create_text(20, 42, anchor="nw", text=f"{era['place']}  ·  {era['age']}  ·  {phase_name}", fill="#c3bdab", font=("TkDefaultFont", 9, "bold"))
         weapon_name = "뉴턴의 지팡이" if self.staff_owned else "검"
         c.create_text(self.w - 20, 18, anchor="ne", text=f"{weapon_name}   HP {self.hp:03d}", fill="#f1e9d4", font=("TkDefaultFont", 13, "bold"))
@@ -4918,20 +4919,36 @@ class PhysicsChronicles:
                           text="중력장 · 이동 속도 감소",
                           fill="#d9c5ff", font=("TkDefaultFont", 9, "bold"))
         c.create_text(self.w / 2, self.h - 28, text=ability_text, fill="#e6d49d", font=("TkDefaultFont", 10, "bold"))
-        if self.frame < self.zone_notice_until and not self.transition:
-            card_x, card_y = 14, 68
-            card_w, card_h = min(310, self.w * .36), 52
-            c.create_rectangle(card_x, card_y, card_x + card_w, card_y + card_h,
+        card_x, card_y = 14, 64
+        card_w, card_h = min(270, self.w * .25), 46
+        c.create_rectangle(card_x, card_y, card_x + card_w, card_y + card_h,
                                fill="#17212b", outline="#526978", width=1)
-            c.create_rectangle(card_x, card_y, card_x + 4, card_y + card_h,
+        c.create_rectangle(card_x, card_y, card_x + 4, card_y + card_h,
                                fill="#e4c779", outline="")
-            c.create_text(card_x + 14, card_y + 8, anchor="nw",
-                          text=f"구역  {self.zone_notice_room:02d} / {ROOM_COUNT:02d}",
-                          fill="#f3d78f", font=("TkDefaultFont", 11, "bold"))
-            c.create_text(card_x + 14, card_y + 30, anchor="nw",
-                          text=self.zone_notice_subtitle, width=card_w - 26,
-                          fill="#e4e7e2", font=("TkDefaultFont", 9))
-        elif self.frame < self.notice_until and not self.transition:
+        zone_total = 1 if self.boss_only_round else ROOM_COUNT
+        zone_number = (1 if self.boss_only_round else
+                       min(ROOM_COUNT, max(1, self.room_wave_index + 1)))
+        c.create_text(card_x + 11, card_y + 6, anchor="nw",
+                      text=f"구역 {zone_number:02d} / {zone_total:02d}",
+                      fill="#f3d78f", font=("TkDefaultFont", 10, "bold"))
+        c.create_text(card_x + card_w - 10, card_y + 6, anchor="ne",
+                      text=f"라운드 {self.round_number:02d}",
+                      fill="#e4e7e2", font=("TkDefaultFont", 9, "bold"))
+        counts = self.current_room_enemy_counts()
+        count_text = [f"적 {counts['mob']:02d}"]
+        if counts["scholar"]:
+            count_text.append(f"중간보스 {counts['scholar']:02d}")
+        if counts["boss"]:
+            count_text.append(f"보스 {counts['boss']:02d}")
+        if not any(counts.values()):
+            if self.midrun_shop_active or self.in_shop:
+                count_text.append("안전 구역")
+            elif self.round_clear:
+                count_text.append("구역 완료")
+        c.create_text(card_x + 11, card_y + 26, anchor="nw",
+                      text=" · ".join(count_text), width=card_w - 20,
+                      fill="#e8eee8", font=("TkDefaultFont", 9, "bold"))
+        if self.frame < self.notice_until and not self.transition:
             notice_y = 169
             c.create_rectangle(self.w * .16, notice_y - 18, self.w * .84, notice_y + 18,
                                fill="#151a25", outline="#8a7860", width=1)
