@@ -1,8 +1,9 @@
 """Physics Chronicles: a small three-era pixel-art action prototype.
 
 Run: python3 physics_chronicles.py
-Controls: Left/Right move, Space double jump, Down+Space drop through, Z dash, A sword/staff,
-V blessing skill, F hand cannon/meteor, B buy staff, Shift parry, Q/W/E physics skills.
+Controls: Left/Right move (double-tap within 0.2 s to dash), C double jump,
+Down+C drop through, Z dash, A sword/staff, V blessing skill, F hand cannon/meteor,
+B buy staff, Space parry, Q/W/E physics skills.
 M opens settings, F11 fullscreen, Esc windowed mode.
 """
 
@@ -43,7 +44,8 @@ PLAYER_SPRITE_W, PLAYER_SPRITE_H = 40, 60
 GRAVITY = 1.35
 TERMINAL_VELOCITY = 24
 MOB_HEAL_CHANCE = 0.25
-MOB_HEAL_AMOUNT = 12
+MOB_HEAL_MIN_FRACTION = 0.10
+MOB_HEAL_MAX_FRACTION = 0.20
 MAX_ACTIVE_ENEMIES = 6
 FIXED_STEP_SECONDS = 1 / 60
 MAX_CATCH_UP_STEPS = 8
@@ -63,8 +65,8 @@ MELEE_MOBS = {"지렛대 병사", "경사면 기사", "중력 기사", "반작�
 RANGED_MOBS = {"부력 장치병", "투석기 수호병", "낙하 장치병", "화승총 사수", "궤도 관측자"}
 
 DEFAULT_CONTROLS = {
-    "move_left": "left", "move_right": "right", "jump": "space", "drop": "down",
-    "dash": "z", "attack": "a", "parry": "shift_l", "ranged": "f",
+    "move_left": "left", "move_right": "right", "jump": "c", "drop": "down",
+    "dash": "z", "attack": "a", "parry": "space", "ranged": "f",
     "interact": "up", "skill_q": "q", "skill_w": "w", "skill_e": "e",
     "blessing": "v", "stats": "i", "shop_staff": "b",
 }
@@ -134,6 +136,8 @@ class PhysicsChronicles:
         self._last_tick_time = time.perf_counter()
         self._tick_accumulator = 0.0
         self.keys = set()
+        self.last_move_tap_key = None
+        self.last_move_tap_at = 0.0
         self.controls = dict(DEFAULT_CONTROLS)
         self.settings_open = False
         self.settings_selection = 0
@@ -234,6 +238,7 @@ class PhysicsChronicles:
         self.music_mci_open = False
         self.music_enabled = True
         self.music_volume = 0.32
+        self.sfx_volume = 0.45
         self.closing = False
         root.protocol("WM_DELETE_WINDOW", self.close)
         self.player_images = self.build_player_images()
@@ -310,6 +315,16 @@ class PhysicsChronicles:
             if sys.platform == "win32" and self.music_mci_open:
                 self.send_mci(f"seek {self.music_mci_alias} to start")
             self.start_music()
+
+    def set_sfx_volume(self):
+        setter = getattr(self.root, "set_sfx_volume", None)
+        if setter:
+            setter(self.sfx_volume)
+
+    def play_sfx(self, kind):
+        player = getattr(self.root, "play_sfx", None)
+        if player and self.sfx_volume > 0:
+            player(kind, self.sfx_volume)
 
     def close(self):
         self.closing = True
@@ -918,6 +933,21 @@ class PhysicsChronicles:
             self.new_encounter()
             return
 
+        move_left = self.controls["move_left"]
+        move_right = self.controls["move_right"]
+        if key in (move_left, move_right):
+            now = time.perf_counter()
+            if key == self.last_move_tap_key and now - self.last_move_tap_at <= 0.2:
+                self.dash(-1 if key == move_left else 1)
+                self.last_move_tap_key = None
+                self.last_move_tap_at = 0.0
+            else:
+                self.last_move_tap_key = key
+                self.last_move_tap_at = now
+        else:
+            self.last_move_tap_key = None
+            self.last_move_tap_at = 0.0
+
         if key == self.controls["interact"]:
             shop_boon = self.blessing_events.get(self.shop_room_index)
             if (self.midrun_shop_active and shop_boon and not shop_boon["used"]
@@ -997,7 +1027,7 @@ class PhysicsChronicles:
             self.rebinding_action = None
             self.keys.clear()
             return
-        row_count = len(CONTROL_ORDER) + 3
+        row_count = len(CONTROL_ORDER) + 4
         if key == "up":
             self.settings_selection = (self.settings_selection - 1) % row_count
         elif key == "down":
@@ -1006,6 +1036,10 @@ class PhysicsChronicles:
             self.music_volume = round(max(0.0, min(1.0,
                 self.music_volume + (.05 if key == "right" else -.05))), 2)
             self.restart_music()
+        elif self.settings_selection == len(CONTROL_ORDER) + 2 and key in ("left", "right"):
+            self.sfx_volume = round(max(0.0, min(1.0,
+                self.sfx_volume + (.05 if key == "right" else -.05))), 2)
+            self.set_sfx_volume()
         elif key in ("return", "space"):
             if self.settings_selection < len(CONTROL_ORDER):
                 self.rebinding_action = CONTROL_ORDER[self.settings_selection]
@@ -1014,6 +1048,9 @@ class PhysicsChronicles:
             elif self.settings_selection == len(CONTROL_ORDER) + 1:
                 self.music_volume = round(min(1.0, self.music_volume + .05), 2)
                 self.restart_music()
+            elif self.settings_selection == len(CONTROL_ORDER) + 2:
+                self.sfx_volume = round(min(1.0, self.sfx_volume + .05), 2)
+                self.set_sfx_volume()
             else:
                 self.controls = dict(DEFAULT_CONTROLS)
                 self.keys.clear()
@@ -1044,7 +1081,7 @@ class PhysicsChronicles:
         c = self.canvas
         c.create_rectangle(0, 0, self.w, self.h, fill="#070a12", stipple="gray50", outline="")
         row_h = 21
-        row_count = len(CONTROL_ORDER) + 3
+        row_count = len(CONTROL_ORDER) + 4
         panel_h = 106 + row_h * row_count
         panel_w = min(650, self.w - 32)
         left = (self.w - panel_w) / 2
@@ -1094,6 +1131,20 @@ class PhysicsChronicles:
                       fill="#a9d9d4", font=("TkDefaultFont", 9, "bold"))
         row_y = rows_top + row_h * (extra + 2)
         if self.settings_selection == extra + 2:
+            c.create_rectangle(left + 12, row_y - 1, left + panel_w - 12,
+                               row_y + row_h - 2, fill="#344050", outline="#d0ad62")
+        c.create_text(left + 26, row_y + 9, anchor="w", text="효과음 음량 · ← → 조절",
+                      fill="#f0eadb", font=("TkDefaultFont", 10))
+        c.create_rectangle(bar_left, row_y + 4, bar_right, row_y + 15,
+                           fill="#302d3b", outline="#796c6b")
+        c.create_rectangle(bar_left + 2, row_y + 6,
+                           bar_left + 2 + (bar_right - bar_left - 4) * self.sfx_volume,
+                           row_y + 13, fill="#85c8c1", outline="")
+        c.create_text(left + panel_w - 24, row_y + 9, anchor="e",
+                      text=f"{round(self.sfx_volume * 100)}%",
+                      fill="#a9d9d4", font=("TkDefaultFont", 9, "bold"))
+        row_y = rows_top + row_h * (extra + 3)
+        if self.settings_selection == extra + 3:
             c.create_rectangle(left + 12, row_y - 1, left + panel_w - 12,
                                row_y + row_h - 2, fill="#493238", outline="#e28b79")
         c.create_text(left + 26, row_y + 9, anchor="w", text="키배치 초기화 · 원래 배치로 복원",
@@ -1364,6 +1415,7 @@ class PhysicsChronicles:
             return
         p = self.player
         px, py = p["x"] + PLAYER_W / 2, p["y"] + PLAYER_H / 2
+        self.play_sfx("gravity" if self.blessing == "newton" else "sword")
         if self.blessing == "archimedes":
             self.player_action, self.player_action_until = "lever", self.frame + 24
             for enemy in self.enemies:
@@ -1497,13 +1549,15 @@ class PhysicsChronicles:
             base_reward = (random.randint(55, 75) if enemy["rank"] == "boss"
                            else random.randint(24, 34) if enemy["rank"] == "scholar"
                            else random.randint(7, 12))
-            reward = int(round(base_reward * (1 + max(0, self.round_number - 1) * .05)))
+            reward = int(round(base_reward * 1.5 * (1 + max(0, self.round_number - 1) * .05)))
             self.coin_drops.append({"x": enemy["x"] + enemy["w"] / 2,
                                     "y": enemy["y"] + enemy["h"] * .65,
                                     "vy": -4.0, "value": reward, "age": 0})
         if was_alive and enemy["hp"] <= 0 and enemy["rank"] == "mob" and self.hp < self.max_hp:
             if random.random() < MOB_HEAL_CHANCE:
-                healed = min(MOB_HEAL_AMOUNT, self.max_hp - self.hp)
+                min_heal = max(1, round(self.max_hp * MOB_HEAL_MIN_FRACTION))
+                max_heal = max(min_heal, round(self.max_hp * MOB_HEAL_MAX_FRACTION))
+                healed = min(random.randint(min_heal, max_heal), self.max_hp - self.hp)
                 self.hp += healed
                 self.effects.append(["heal", self.player["x"] + PLAYER_W / 2,
                                      self.player["y"] + PLAYER_H / 2, 42, healed])
@@ -1599,14 +1653,15 @@ class PhysicsChronicles:
                 remaining.append(coin)
         self.coin_drops = remaining
 
-    def dash(self):
+    def dash(self, direction=None):
         if self.frame < self.dash_cd or self.game_over or self.finished or self.transition:
             return
-        direction = self.player["face"]
-        if self.action_down("move_left"):
-            direction = -1
-        elif self.action_down("move_right"):
-            direction = 1
+        if direction not in (-1, 1):
+            direction = self.player["face"]
+            if self.action_down("move_left"):
+                direction = -1
+            elif self.action_down("move_right"):
+                direction = 1
         p = self.player
         old_x = p["x"]
         p["face"] = direction
@@ -1631,6 +1686,7 @@ class PhysicsChronicles:
         if self.staff_owned:
             self.staff_basic_attack()
             return
+        self.play_sfx("sword")
         self.attack_until = self.frame + 20
         cooldown = self.next_basic_attack_cooldown(19)
         self.attack_cd = self.frame + cooldown
@@ -1649,6 +1705,7 @@ class PhysicsChronicles:
         if not targets:
             self.say("중력 공격 범위 안에 적이 없습니다")
             return
+        self.play_sfx("gravity")
         target = min(targets, key=lambda enemy: math.hypot(
             enemy["x"] + enemy["w"] / 2 - px,
             enemy["y"] + enemy["h"] / 2 - py))
@@ -1678,6 +1735,7 @@ class PhysicsChronicles:
         if self.staff_owned:
             self.cast_meteor()
             return
+        self.play_sfx("gun")
         p = self.player
         self.player_action, self.player_action_until = "gun", self.frame + 18
         self.gun_until = self.player_action_until
@@ -1692,6 +1750,7 @@ class PhysicsChronicles:
         if not targets:
             self.say("운석을 조준할 적이 없습니다")
             return
+        self.play_sfx("meteor")
         px = self.player["x"] + PLAYER_W / 2
         py = self.player["y"] + PLAYER_H / 2
         target = max(targets, key=lambda enemy: math.hypot(
@@ -1733,6 +1792,7 @@ class PhysicsChronicles:
     def use_skill(self, slot):
         if slot >= len(self.skills) or self.frame < self.skill_cd[slot] or self.game_over or self.finished:
             return
+        self.play_sfx("gravity" if slot == 2 else "sword")
         p = self.player
         if slot == 0:
             self.player_action, self.player_action_until = "lever", self.frame + 24

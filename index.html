@@ -24,7 +24,9 @@
     .touch-group { display:flex; gap:8px; }
     .touch-key { min-width:48px; height:44px; border:1px solid #8b7587; border-radius:12px; color:#f6ead7; background:#282537eF; font-size:16px; font-weight:800; touch-action:none; }
     .touch-key:active { background:#876176; }
-    #fullscreen { border:1px solid #756477; color:#e8d8c6; background:#242231; padding:8px 12px; border-radius:8px; cursor:pointer; }     #start { border:1px solid #a88965; color:#15131a; background:#e4c58b; padding:8px 15px; border-radius:8px; cursor:pointer; font-weight:800; white-space:nowrap; }     #start:disabled { opacity:.55; cursor:wait; }
+    #fullscreen { border:1px solid #756477; color:#e8d8c6; background:#242231; padding:8px 12px; border-radius:8px; cursor:pointer; }
+    #start { border:1px solid #a88965; color:#15131a; background:#e4c58b; padding:8px 15px; border-radius:8px; cursor:pointer; font-weight:800; white-space:nowrap; }
+    #start:disabled { opacity:.55; cursor:wait; }
     .fullscreen { background:#10121b; }
     .fullscreen body { position:fixed; inset:0; padding:0; display:grid; place-items:center; overflow:hidden; }
     .fullscreen header,.fullscreen #controls,.fullscreen #touch { display:none !important; }
@@ -42,13 +44,13 @@
     <pre id="error"></pre>
   </main>
   <div id="controls">
-    <span><b>←/→</b> 이동</span><span><b>Space</b> 점프·더블 점프</span><span><b>Z</b> 구르기</span>
-    <span><b>A</b> 기본 공격</span><span><b>Shift</b> 패링</span><span><b>F</b> 원거리</span><span><b>M</b> 설정</span>
+    <span><b>←/→</b> 이동 · 같은 방향 0.2초 안에 두 번 누르면 대쉬</span><span><b>C</b> 점프·더블 점프</span><span><b>Z</b> 대쉬</span>
+    <span><b>A</b> 기본 공격</span><span><b>Space</b> 막기(패링)</span><span><b>F</b> 원거리</span><span><b>M</b> 설정</span>
     <span>문·대화는 게임 내 안내 키</span>
   </div>
   <div id="touch" aria-label="터치 조작">
     <div class="touch-group"><button class="touch-key" data-key="ArrowLeft">◀</button><button class="touch-key" data-key="ArrowRight">▶</button></div>
-    <div class="touch-group"><button class="touch-key" data-key="space">점프</button><button class="touch-key" data-key="z">구르기</button><button class="touch-key" data-key="a">평타</button><button class="touch-key" data-key="shift_l">패링</button></div>
+    <div class="touch-group"><button class="touch-key" data-key="c">점프</button><button class="touch-key" data-key="z">대쉬</button><button class="touch-key" data-key="a">평타</button><button class="touch-key" data-key="space">막기</button></div>
   </div>
   <audio id="music" src="./physics_chronicles.wav" preload="auto" loop></audio>
 
@@ -59,9 +61,11 @@
   const ctx = canvas.getContext('2d');
   const loading = document.getElementById('loading');
   const errorBox = document.getElementById('error');
-  const status = document.getElementById('state'); const startButton = document.getElementById('start');
+  const status = document.getElementById('state');
+  const startButton = document.getElementById('start');
   const audio = document.getElementById('music');
   const images = new Map();
+  let sfxContext = null, sfxVolume = 0.45, sfxNoiseBuffer = null;
   let pythonRuntime = null;
   let audioRequested = false, audioUnlocked = false, gameStarted = false;
   let gameFrameRequest = 0;
@@ -101,7 +105,7 @@
   function drawText(item,o,p) {
     const [x,y]=p; ctx.font=parseFont(o.font);ctx.fillStyle=color(o.fill,'#eee');ctx.textAlign='left';ctx.textBaseline='top';
     const anchor=String(o.anchor||'center').toLowerCase();
-    if(['e','ne','se'].includes(anchor))ctx.textAlign='right';     else if(['center','n','s'].includes(anchor))ctx.textAlign='center';
+    if(['e','ne','se'].includes(anchor))ctx.textAlign='right';else if(['center','n','s'].includes(anchor))ctx.textAlign='center';
     if(anchor.includes('n'))ctx.textBaseline='top';else if(anchor.includes('s'))ctx.textBaseline='bottom';else ctx.textBaseline='middle';
     const width=Number(o.width)||0;const lines=wrapText(o.text,width);const fontSize=Number(Array.isArray(o.font)?o.font[1]:0)||12;const lineHeight=fontSize*1.22;
     if(lines.length===1){ctx.fillText(lines[0],x,y,width||undefined);return;}
@@ -166,6 +170,43 @@
       if(!enabled){audio.pause();return;}
       if(audioUnlocked&&audio.paused)audio.play().catch(()=>{});
     },
+    setSfxVolume(volume){sfxVolume=Math.max(0,Math.min(1,Number(volume)||0));},
+    playSfx(kind,volume){
+      if(volume!==undefined)this.setSfxVolume(volume);
+      if(sfxVolume<=0)return;
+      try{
+        const AudioContextClass=window.AudioContext||window.webkitAudioContext;
+        if(!AudioContextClass)return;
+        if(!sfxContext)sfxContext=new AudioContextClass();
+        if(sfxContext.state==='suspended')sfxContext.resume().catch(()=>{});
+        const now=sfxContext.currentTime, master=sfxContext.createGain();
+        const length=kind==='gun' ? .075 : kind==='meteor' ? .28 : .16;
+        master.gain.setValueAtTime(.0001,now);
+        master.gain.exponentialRampToValueAtTime(Math.max(.0002,sfxVolume*.22),now+.008);
+        master.gain.exponentialRampToValueAtTime(.0001,now+length);
+        master.connect(sfxContext.destination);
+        const osc=sfxContext.createOscillator(), toneGain=sfxContext.createGain();
+        osc.type=kind==='gun'?'square':'triangle';
+        const startHz=kind==='gun'?190:kind==='meteor'?125:kind==='gravity'?260:540;
+        const endHz=kind==='gun'?72:kind==='meteor'?42:kind==='gravity'?80:145;
+        osc.frequency.setValueAtTime(startHz,now);
+        osc.frequency.exponentialRampToValueAtTime(endHz,now+length);
+        toneGain.gain.setValueAtTime(kind==='gun' ? .55 : .34,now);
+        toneGain.connect(master);osc.connect(toneGain);osc.start(now);osc.stop(now+length+.01);
+        if(kind!=='gravity'&&kind!=='meteor'){
+          if(!sfxNoiseBuffer){
+            sfxNoiseBuffer=sfxContext.createBuffer(1,Math.ceil(sfxContext.sampleRate*.18),sfxContext.sampleRate);
+            const data=sfxNoiseBuffer.getChannelData(0);
+            for(let i=0;i<data.length;i++)data[i]=Math.random()*2-1;
+          }
+          const noise=sfxContext.createBufferSource(), filter=sfxContext.createBiquadFilter(), noiseGain=sfxContext.createGain();
+          noise.buffer=sfxNoiseBuffer;filter.type='lowpass';filter.frequency.setValueAtTime(kind==='gun'?1300:4200,now);
+          noiseGain.gain.setValueAtTime(kind==='gun' ? .30 : .38,now);
+          noiseGain.gain.exponentialRampToValueAtTime(.0001,now+length*.82);
+          noise.connect(filter);filter.connect(noiseGain);noiseGain.connect(master);noise.start(now);noise.stop(now+length);
+        }
+      }catch(_error){}
+    },
     isFullscreen(){return !!document.fullscreenElement||document.documentElement.classList.contains('fullscreen');},
     setFullscreen(enabled){
       if(enabled){document.documentElement.classList.add('fullscreen');document.documentElement.requestFullscreen?.().catch(()=>{});}
@@ -201,7 +242,11 @@
     gameFrameAccumulator=0;
     unlockAudio();
   }
-  function startGame(){ if(!gameStarted){gameStarted=true;startButton.textContent='게임 실행 중';status.textContent='실행 중 · 화면을 클릭하면 조작할 수 있습니다';} focusGame(); } function pauseGame(){
+  function startGame(){
+    if(!gameStarted){gameStarted=true;startButton.textContent='게임 실행 중';status.textContent='실행 중 · 화면을 클릭하면 조작할 수 있습니다';}
+    focusGame();
+  }
+  function pauseGame(){
     gameFocused=false;
     releaseHeldKeys();
     gameFrameAccumulator=0;
@@ -209,12 +254,23 @@
   window.addEventListener('keydown',e=>{
     const key=keyFromEvent(e);
     if(['left','right','up','down','space','f11'].includes(key))e.preventDefault();
-    if(!gameStarted)startGame(); if(!gameFocused)focusGame();
+    if(!gameStarted)startGame();
+    if(!gameFocused)focusGame();
     dispatch('keyDown',key);
     unlockAudio();
   },{passive:false,capture:true});
-  window.addEventListener('keyup',e=>dispatch('keyUp',keyFromEvent(e)),true); function keyFromEvent(e){const codeMap={ArrowLeft:'left',ArrowRight:'right',ArrowUp:'up',ArrowDown:'down',Space:'space',ShiftLeft:'shift_l',ShiftRight:'shift_r',Escape:'escape',Enter:'return',F11:'f11'}; if(codeMap[e.code])return codeMap[e.code]; if(e.code?.startsWith('Key'))return e.code.slice(3).toLowerCase(); if(e.code?.startsWith('Digit'))return e.code.slice(5); return normalKey(e.key);}
-  function unlockAudio(){if(audioUnlocked)return;audioUnlocked=true;if(audioRequested)audio.play().catch(()=>{});}
+  window.addEventListener('keyup',e=>dispatch('keyUp',keyFromEvent(e)),true);
+  function keyFromEvent(e){
+    const codeMap={ArrowLeft:'left',ArrowRight:'right',ArrowUp:'up',ArrowDown:'down',Space:'space',ShiftLeft:'shift_l',ShiftRight:'shift_r',Escape:'escape',Enter:'return',F11:'f11'};
+    if(codeMap[e.code])return codeMap[e.code];
+    if(e.code?.startsWith('Key'))return e.code.slice(3).toLowerCase();
+    if(e.code?.startsWith('Digit'))return e.code.slice(5);
+    return normalKey(e.key);
+  }
+  function unlockAudio(){
+    if(!audioUnlocked){audioUnlocked=true;if(audioRequested)audio.play().catch(()=>{});}
+    try{const AudioContextClass=window.AudioContext||window.webkitAudioContext;if(AudioContextClass&&!sfxContext)sfxContext=new AudioContextClass();if(sfxContext?.state==='suspended')sfxContext.resume().catch(()=>{});}catch(_error){}
+  }
 
   function driveGameFrame(timestamp){
     if(!frameFn)return;
@@ -244,7 +300,8 @@
     button.addEventListener('pointercancel',up);
     button.addEventListener('lostpointercapture',up);
   });
-  startButton.addEventListener('click',startGame); document.getElementById('fullscreen').addEventListener('click',()=>window.gameBridge.setFullscreen(!window.gameBridge.isFullscreen()));
+  startButton.addEventListener('click',startGame);
+  document.getElementById('fullscreen').addEventListener('click',()=>window.gameBridge.setFullscreen(!window.gameBridge.isFullscreen()));
 
   async function fetchGameFile(file){
     let pagesResponse;
@@ -326,7 +383,8 @@
       keyFn=pythonRuntime.runPython('browser_key');
       status.textContent='준비 완료 · 방향키로 이동';
       loading.style.display='none';
-      startButton.disabled=false; startButton.textContent='게임 시작';
+      startButton.disabled=false;
+      startButton.textContent='게임 시작';
       gameFrameRequest=window.requestAnimationFrame(driveGameFrame);
     }catch(error){window.gameBridge.showError(error?.stack||error);}
   }

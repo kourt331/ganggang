@@ -1,4 +1,3 @@
-
 """Small Tkinter compatibility layer for Physics Chronicles in Pyodide.
 
 The desktop game keeps its Python update, combat, and drawing calls. This
@@ -185,8 +184,9 @@ class Tk:
         return bool(value)
 
     def after(self, delay_ms, callback):
-        # The browser adapter advances the game from requestAnimationFrame.
-        # Ignore the desktop tick loop so it cannot run alongside the browser loop.
+        # The browser adapter drives PhysicsChronicles.tick from JavaScript's
+        # animation frame loop. Letting tick schedule another timeout here
+        # creates a second, drifting loop and can stall the Pyodide callback.
         if getattr(callback, "__name__", "") == "tick":
             return None
         proxy = None
@@ -211,12 +211,18 @@ class Tk:
     def set_music(self, enabled, volume):
         window.gameBridge.setMusic(bool(enabled), float(volume))
 
+    def set_sfx_volume(self, volume):
+        window.gameBridge.setSfxVolume(float(volume))
+
+    def play_sfx(self, kind, volume):
+        window.gameBridge.playSfx(str(kind), float(volume))
+
     def destroy(self):
         self._destroyed = True
         window.gameBridge.setMusic(False, 0)
 
     def mainloop(self):
-        # Browser animation frames drive the game loop.
+        # Browser timers drive the same `tick` method as Tk's event loop.
         return None
 
 
@@ -238,3 +244,4 @@ def browser_configure(width, height):
 def browser_flush():
     if _root and _root.canvas:
         _root.canvas.flush()
+
