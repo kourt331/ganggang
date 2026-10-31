@@ -1,6 +1,8 @@
 # Physics Chronicles · GitHub Pages
 
-This package runs the existing Python/Tkinter game logic in the browser. `original_game.py` is the game source copied from `해커은신처.py`; its fixed-step update loop and combat logic remain Python. `tkinter.py` supplies the small Tk window and Canvas surface that Pyodide does not include, forwarding the original drawing calls to the browser's HTML Canvas. Keyboard events are forwarded back to the original Python callbacks. The original WAV is played by the browser audio element.
+This package runs the Python/Tkinter game in a browser with its gameplay logic in Python and a Canvas renderer. It uses Pyodide 0.27.7 and a small Tkinter compatibility layer. The page waits for **게임 시작** before advancing the simulation. Keyboard letters are read by physical key position, so they work with a Korean keyboard layout.
+
+Default controls: **←/→** move, **Space** jump/double jump, **Z** roll, **A** basic attack, **Shift** parry, **F** ranged attack, **↑** interact, **M** settings, and **I** stats. Settings let players remap controls and restore the defaults.
 
 ## Publish on GitHub Pages
 
@@ -21,7 +23,7 @@ Then open `http://localhost:8000` in a current browser.
 ## Files
 
 - `index.html`: GitHub Pages entry point, browser input/audio, Canvas renderer, and Pyodide bootstrap
-- `original_game.py`: the original Python game, renamed for the web package
+- `original_game.py`: Python game logic and gameplay rules
 - `tkinter.py`: browser implementation of the Tk root, Canvas drawing API, and `after()` timer
 - `physics_chronicles.wav`: background music used by the original game
 
