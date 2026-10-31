@@ -1272,21 +1272,34 @@ class PhysicsChronicles:
         self.notice_until = self.frame + 180
 
     def current_room_enemy_counts(self):
-        counts = {"mob": 0, "scholar": 0, "boss": 0}
+        counts = {
+            "mob": {"remaining": 0, "total": 0},
+            "scholar": {"remaining": 0, "total": 0},
+            "boss": {"remaining": 0, "total": 0},
+        }
 
-        def add(rank):
+        def category(rank):
             key = rank if rank in ("scholar", "boss") else "mob"
-            counts[key] += 1
+            return key
 
-        for enemy in self.enemies:
-            if enemy["hp"] > 0 and enemy["rank"] != "dummy":
-                add(enemy["rank"])
-        for _kind, _x, rank in self.spawn_queue:
-            add(rank)
+        if self.room_wave_index >= len(self.room_waves):
+            return counts
+
+        wave = self.room_waves[self.room_wave_index]
+        for _kind, _x, rank in wave:
+            counts[category(rank)]["total"] += 1
+
         if (not self.room_wave_started and not self.midrun_shop_active
-                and not self.in_shop and self.room_wave_index < len(self.room_waves)):
-            for _kind, _x, rank in self.room_waves[self.room_wave_index]:
-                add(rank)
+                and not self.in_shop):
+            remaining_wave = wave
+            for _kind, _x, rank in remaining_wave:
+                counts[category(rank)]["remaining"] += 1
+        else:
+            for enemy in self.enemies:
+                if enemy["hp"] > 0 and enemy["rank"] != "dummy":
+                    counts[category(enemy["rank"])]["remaining"] += 1
+            for _kind, _x, rank in self.spawn_queue:
+                counts[category(rank)]["remaining"] += 1
         return counts
 
     def cooldown_frames(self, frames):
@@ -4929,18 +4942,22 @@ class PhysicsChronicles:
         zone_number = (1 if self.boss_only_round else
                        min(ROOM_COUNT, max(1, self.room_wave_index + 1)))
         c.create_text(card_x + 11, card_y + 6, anchor="nw",
-                      text=f"구역 {zone_number:02d} / {zone_total:02d}",
+                      text=f"구역 {zone_number} / {zone_total}",
                       fill="#f3d78f", font=("TkDefaultFont", 10, "bold"))
         c.create_text(card_x + card_w - 10, card_y + 6, anchor="ne",
-                      text=f"라운드 {self.round_number:02d}",
+                      text=f"라운드 {self.round_number}",
                       fill="#e4e7e2", font=("TkDefaultFont", 9, "bold"))
         counts = self.current_room_enemy_counts()
-        count_text = [f"적 {counts['mob']:02d}"]
-        if counts["scholar"]:
-            count_text.append(f"중간보스 {counts['scholar']:02d}")
-        if counts["boss"]:
-            count_text.append(f"보스 {counts['boss']:02d}")
-        if not any(counts.values()):
+        count_text = [f"적 {counts['mob']['remaining']}/{counts['mob']['total']}"]
+        if counts["scholar"]["total"]:
+            count_text.append(
+                f"중간보스 {counts['scholar']['remaining']}/{counts['scholar']['total']}"
+            )
+        if counts["boss"]["total"]:
+            count_text.append(
+                f"보스 {counts['boss']['remaining']}/{counts['boss']['total']}"
+            )
+        if not any(counts[key]["total"] for key in counts):
             if self.midrun_shop_active or self.in_shop:
                 count_text.append("안전 구역")
             elif self.round_clear:
