@@ -1,8 +1,8 @@
 """Physics Chronicles: a small three-era pixel-art action prototype.
 
 Run: python3 physics_chronicles.py
-Controls: Left/Right move, C double jump, Down+C drop through, Z dash, X sword/staff,
-V blessing skill, F hand cannon/meteor, B buy staff, Space parry, Q/W/E physics skills.
+Controls: Left/Right move, Space double jump, Down+Space drop through, Z dash, A sword/staff,
+V blessing skill, F hand cannon/meteor, B buy staff, Shift parry, Q/W/E physics skills.
 M opens settings, F11 fullscreen, Esc windowed mode.
 """
 
@@ -28,7 +28,8 @@ SHOP_EXIT_X = (SHOP_ROOM_INDEX + 1) * ROOM_WIDTH
 SHOP_LEVER_X = SHOP_EXIT_X - 150
 NEWTON_STALL_X = SHOP_START_X + 840
 SHOP_BIRD_X = SHOP_START_X + 1220
-SHOP_APPEAR_CHANCE = .35
+SWORD_STALL_X = SHOP_START_X + 1550
+SHOP_APPEAR_CHANCE = .10
 SHOP_BLESSING_CHANCE = .30
 SHOP_BLESSING_BRIBE = 500
 WORLD = ROOM_WIDTH * ROOM_COUNT
@@ -62,8 +63,8 @@ MELEE_MOBS = {"지렛대 병사", "경사면 기사", "중력 기사", "반작�
 RANGED_MOBS = {"부력 장치병", "투석기 수호병", "낙하 장치병", "화승총 사수", "궤도 관측자"}
 
 DEFAULT_CONTROLS = {
-    "move_left": "left", "move_right": "right", "jump": "c", "drop": "down",
-    "dash": "z", "attack": "x", "parry": "space", "ranged": "f",
+    "move_left": "left", "move_right": "right", "jump": "space", "drop": "down",
+    "dash": "z", "attack": "a", "parry": "shift_l", "ranged": "f",
     "interact": "up", "skill_q": "q", "skill_w": "w", "skill_e": "e",
     "blessing": "v", "stats": "i", "shop_staff": "b",
 }
@@ -73,7 +74,7 @@ CONTROL_LABELS = {
     "drop": "아래 발판으로 내려가기", "dash": "대쉬", "attack": "기본 공격",
     "parry": "패링", "ranged": "원거리 공격", "interact": "대화/상호작용",
     "skill_q": "물리 기술 Q", "skill_w": "물리 기술 W", "skill_e": "물리 기술 E",
-    "blessing": "가호 기술", "stats": "스탯 창", "shop_staff": "지팡이 구매",
+    "blessing": "가호 기술", "stats": "스탯 창", "shop_staff": "상점 무기 구매",
 }
 BLESSINGS = {
     "archimedes": {"figure": "아르키메데스", "skill": "지렛대 파동",
@@ -399,7 +400,7 @@ class PhysicsChronicles:
                 if room == self.shop_room_index:
                     group = []
                 else:
-                    mob_count = random.randint(2, 3) if room < SHOP_ROOM_INDEX else random.randint(2, 6)
+                    mob_count = random.randint(2, 3) if room < ROOM_COUNT - 1 else random.randint(2, 6)
                     group = self.make_room_wave(room, mob_count, era)
                 if self.phase == 1 and room == 3:
                     group.append((era["scholar"], base + int(ROOM_WIDTH * .72), "scholar"))
@@ -408,8 +409,9 @@ class PhysicsChronicles:
             # Boons can appear only in a safe shop, with a separate chance roll.
             if self.shop_room_index is not None and random.random() < SHOP_BLESSING_CHANCE:
                 self.blessing_events[self.shop_room_index] = {
-                    "x": float(SHOP_START_X + 1550),
+                    "x": float(SHOP_BIRD_X + 145),
                     "chapter": self.chapter,
+                    "blessing": random.choice(tuple(BLESSINGS)),
                     "used": False,
                     "clear_offer_shown": False,
                     "offer_until": 0,
@@ -757,7 +759,7 @@ class PhysicsChronicles:
                                          self.player["x"] + 72))
                     event["clear_offer_shown"] = True
                     event["offer_until"] = self.frame + 240
-                    self.say(f"{BLESSINGS[CHAPTER_BLESSINGS[event['chapter']]]['figure']}의 혼이 나타났다 · 가까이 가서 대화하세요")
+                    self.say(f"{BLESSINGS[self.blessing_id_for_event(event)]['figure']}의 혼이 나타났다 · 가까이 가서 대화하세요")
                     return
                 if self.frame < event["offer_until"]:
                     return
@@ -794,9 +796,8 @@ class PhysicsChronicles:
         else:
             width, height, hp = 42, 68, 80
         if rank == "mob":
-            # These regular enemies were previously at 1.5x lower HP. Reduce
-            # that current value by another factor of 1.2.
-            hp = int(round(hp * 10 / 9))
+            # Keep grunts noticeably lighter than the scholars and bosses.
+            hp = max(1, int(round(hp / 1.2)))
         ledge_bounds = None
         if rank == "mob" and kind in RANGED_MOBS:
             room = max(0, min(ROOM_COUNT - 1, int(x // ROOM_WIDTH)))
@@ -918,6 +919,13 @@ class PhysicsChronicles:
             return
 
         if key == self.controls["interact"]:
+            shop_boon = self.blessing_events.get(self.shop_room_index)
+            if (self.midrun_shop_active and shop_boon and not shop_boon["used"]
+                    and abs(self.player["x"] - shop_boon["x"]) < 112
+                    and abs(self.player["x"] - shop_boon["x"])
+                    <= abs(self.player["x"] - SHOP_BIRD_X)):
+                if self.try_open_blessing():
+                    return
             if self.midrun_shop_active and abs(self.player["x"] - SHOP_BIRD_X) < 115:
                 self.shop_bird_menu = True
                 self.say(f"비둘기 상점 · 1 완전 회복 50 G  ·  2 가호 소환 {SHOP_BLESSING_BRIBE} G")
@@ -931,6 +939,9 @@ class PhysicsChronicles:
                 return
             if self.midrun_shop_active and abs(self.player["x"] - NEWTON_STALL_X) < 150:
                 self.buy_newton_staff()
+                return
+            if self.midrun_shop_active and abs(self.player["x"] - SWORD_STALL_X) < 110:
+                self.buy_starting_sword()
                 return
             if self.midrun_shop_active and not self.shop_exit_open and abs(self.player["x"] - SHOP_LEVER_X) < 100:
                 self.open_midrun_shop_exit()
@@ -968,6 +979,8 @@ class PhysicsChronicles:
         elif key == self.controls["shop_staff"] and self.midrun_shop_active:
             if abs(self.player["x"] - SHOP_BIRD_X) < 115:
                 self.summon_shop_blessing()
+            elif abs(self.player["x"] - SWORD_STALL_X) < 110:
+                self.buy_starting_sword()
             else:
                 self.buy_newton_staff()
         elif key == self.controls["blessing"]:
@@ -1025,7 +1038,7 @@ class PhysicsChronicles:
     @staticmethod
     def key_label(key):
         return {"space": "SPACE", "left": "←", "right": "→", "up": "↑", "down": "↓",
-                "return": "ENTER"}.get(key, key.upper())
+                "return": "ENTER", "shift_l": "SHIFT", "shift_r": "SHIFT"}.get(key, key.upper())
 
     def draw_settings(self):
         c = self.canvas
@@ -1096,7 +1109,7 @@ class PhysicsChronicles:
         event = self.blessing_events.get(room)
         if not event:
             return
-        spec = BLESSINGS[CHAPTER_BLESSINGS[event["chapter"]]]
+        spec = BLESSINGS[self.blessing_id_for_event(event)]
         cost = self.blessing_cost()
         c = self.canvas
         left, top = self.w / 2 - 260, self.h / 2 - 100
@@ -1108,8 +1121,9 @@ class PhysicsChronicles:
         c.create_text(self.w / 2, top + 67,
                       text=f"{self.key_label(self.controls['blessing'])} 기술 · {spec['skill']}    ·    대가 {cost} G",
                       fill="#f1ead9", font=("TkDefaultFont", 12, "bold"))
-        benefit = ("공격력 +12%" if event["chapter"] == 0 else
-                   "이동 속도 +15%" if event["chapter"] == 1 else "최대 체력 +150")
+        benefit = (f"공격력 +{spec['damage']:.0%}" if spec["damage"] else
+                   f"이동 속도 +{spec['move']:.0%}" if spec["move"] else
+                   f"최대 체력 +{spec['hp']}")
         c.create_text(self.w / 2, top + 96, text=f"가호 효과 · {benefit}",
                       fill="#a9d9d4", font=("TkDefaultFont", 11, "bold"))
         current = "없음" if self.blessing is None else BLESSINGS[self.blessing]["figure"]
@@ -1142,12 +1156,12 @@ class PhysicsChronicles:
                       font=("TkDefaultFont", 12, "bold"))
         if self.staff_owned:
             weapon_lines = (
-                f"{self.key_label(self.controls['attack'])} 기본 공격 · 가장 가까운 적을 자동 조준해 범위 중력 강타",
+                f"{self.key_label(self.controls['attack'])} 기본 공격 · 가장 가까운 적을 자동 조준해 범위 중력 강타 · 4회마다 0.5초 후딜",
                 f"{self.key_label(self.controls['ranged'])} 기술 · 가장 먼 적에게 운석 낙하 · 쿨타임 5초 · 점프 높이 +16%",
             )
         else:
             weapon_lines = (
-                f"{self.key_label(self.controls['attack'])} 기본 공격 · 검을 휘둘러 전방을 베기",
+                f"{self.key_label(self.controls['attack'])} 기본 공격 · 검을 휘둘러 전방을 베기 · 4회마다 0.5초 후딜",
                 f"{self.key_label(self.controls['ranged'])} 원거리 공격 · 상태 효과 없는 직선 압축탄 · 쿨타임 5초",
             )
         for index, line in enumerate(weapon_lines):
@@ -1215,6 +1229,19 @@ class PhysicsChronicles:
     def attack_cooldown_frames(self, frames):
         return max(6, int(frames * (1 - self.attack_speed_bonus)))
 
+    def next_basic_attack_cooldown(self, base_frames):
+        if (self.attack_last_frame is None
+                or self.frame - self.attack_last_frame > 60):
+            self.attack_combo_count = 1
+        else:
+            self.attack_combo_count += 1
+        self.attack_last_frame = self.frame
+        cooldown = self.attack_cooldown_frames(base_frames)
+        if self.attack_combo_count >= 4:
+            cooldown += self.attack_cooldown_frames(30)
+            self.attack_combo_count = 0
+        return cooldown
+
     def stat_cost(self, stat):
         purchase_count = self.stat_purchases.get(stat, 0)
         # Prices rise gently per purchase, with a larger step every fifth stat level.
@@ -1247,6 +1274,10 @@ class PhysicsChronicles:
             detail = f"공격속도 +{self.attack_speed_bonus:.0%}"
         self.say(f"{costs[stat]} 강화 · {detail} · -{cost} G")
 
+    def blessing_id_for_event(self, event):
+        blessing_id = event.get("blessing")
+        return blessing_id if blessing_id in BLESSINGS else CHAPTER_BLESSINGS[event.get("chapter", self.chapter)]
+
     def blessing_cost(self):
         return 60 + max(0, self.round_number - 1) * 5
 
@@ -1259,7 +1290,7 @@ class PhysicsChronicles:
             return False
         self.blessing_offer_room = room
         self.blessing_menu = True
-        figure = BLESSINGS[CHAPTER_BLESSINGS[event["chapter"]]]["figure"]
+        figure = BLESSINGS[self.blessing_id_for_event(event)]["figure"]
         self.say(f"{figure}의 가호 · 1번으로 {self.blessing_cost()} G에 받거나 변경")
         return True
 
@@ -1281,7 +1312,7 @@ class PhysicsChronicles:
         if not event or event["used"]:
             self.blessing_menu = False
             return
-        blessing_id = CHAPTER_BLESSINGS[event["chapter"]]
+        blessing_id = self.blessing_id_for_event(event)
         spec = BLESSINGS[blessing_id]
         if self.blessing == blessing_id:
             event["used"] = True
@@ -1306,24 +1337,23 @@ class PhysicsChronicles:
             self.say("이미 상점에 위인의 기운이 나타나 있습니다")
             self.shop_bird_menu = False
             return
-        if self.blessing == CHAPTER_BLESSINGS[self.chapter]:
-            self.say("이미 이 시대의 가호를 받고 있습니다")
-            self.shop_bird_menu = False
-            return
         if self.gold < SHOP_BLESSING_BRIBE:
             self.say(f"동전이 부족합니다 · 가호를 부르려면 {SHOP_BLESSING_BRIBE} G 필요")
             return
         self.gold -= SHOP_BLESSING_BRIBE
+        options = [blessing_id for blessing_id in BLESSINGS if blessing_id != self.blessing]
+        blessing_id = random.choice(options or list(BLESSINGS))
         self.blessing_events[self.shop_room_index] = {
             "x": float(SHOP_BIRD_X + 145),
             "chapter": self.chapter,
+            "blessing": blessing_id,
             "used": False,
             "clear_offer_shown": False,
             "offer_until": 0,
             "shop": True,
         }
         self.shop_bird_menu = False
-        figure = BLESSINGS[CHAPTER_BLESSINGS[self.chapter]]["figure"]
+        figure = BLESSINGS[blessing_id]["figure"]
         self.say(f"비둘기에게 500 G를 건넸다 · {figure}의 가호가 상점에 나타났다")
 
     def use_blessing(self):
@@ -1392,6 +1422,25 @@ class PhysicsChronicles:
         self.gold -= cost
         self.staff_owned = True
         self.say(f"뉴턴의 지팡이를 장착했습니다 · {self.key_label(self.controls['attack'])} 중력 강타 · {self.key_label(self.controls['ranged'])} 운석 · 점프력 상승")
+
+    def buy_starting_sword(self):
+        if not self.midrun_shop_active:
+            return
+        if abs(self.player["x"] - SWORD_STALL_X) >= 110:
+            self.say(f"검 가판대에 가까이 가서 {self.key_label(self.controls['interact'])}를 누르세요")
+            return
+        if not self.staff_owned:
+            self.say("기본 검을 이미 장착하고 있습니다")
+            return
+        cost = 100
+        if self.gold < cost:
+            self.say(f"동전이 부족합니다 · 기본 검으로 교체하려면 {cost} G")
+            return
+        self.gold -= cost
+        self.staff_owned = False
+        self.attack_combo_count = 0
+        self.attack_last_frame = None
+        self.say(f"기본 검을 장착했습니다 · -{cost} G")
 
     def buy_full_heal(self):
         cost = 50
@@ -1580,20 +1629,10 @@ class PhysicsChronicles:
         if self.frame < self.attack_cd or self.game_over or self.finished or self.transition:
             return
         if self.staff_owned:
-            self.attack_combo_count = 0
-            self.attack_last_frame = None
             self.staff_basic_attack()
             return
         self.attack_until = self.frame + 20
-        if self.attack_last_frame is None or self.frame - self.attack_last_frame > 60:
-            self.attack_combo_count = 1
-        else:
-            self.attack_combo_count += 1
-        self.attack_last_frame = self.frame
-        cooldown = self.attack_cooldown_frames(19)
-        if self.attack_combo_count >= 4:
-            cooldown += 30
-            self.attack_combo_count = 0
+        cooldown = self.next_basic_attack_cooldown(19)
         self.attack_cd = self.frame + cooldown
         self.player_action, self.player_action_until = "slash", self.frame + 20
         self.swing_hits.clear()
@@ -1617,7 +1656,7 @@ class PhysicsChronicles:
         ty = target["y"] + target["h"] / 2
         p["face"] = 1 if tx >= px else -1
         self.attack_until = self.frame + 18
-        self.attack_cd = self.frame + self.attack_cooldown_frames(32)
+        self.attack_cd = self.frame + self.next_basic_attack_cooldown(32)
         self.player_action, self.player_action_until = "staff", self.frame + 24
         self.effects.append(["gravity", tx, ty, 30])
         self.effects.append(["gravity_slam", tx, ty, 20, 158])
@@ -1627,7 +1666,7 @@ class PhysicsChronicles:
             ex = enemy["x"] + enemy["w"] / 2
             ey = enemy["y"] + enemy["h"] / 2
             if math.hypot(ex - tx, (ey - ty) * .82) <= 158:
-                self.damage_enemy(enemy, 42 if enemy["rank"] != "boss" else 34)
+                self.damage_enemy(enemy, 35 if enemy["rank"] != "boss" else 28)
                 enemy["gravity_boost_until"] = self.frame + 18
                 enemy["vy"] = min(TERMINAL_VELOCITY, enemy["vy"] + 7)
                 enemy["hit"] = 10
@@ -1825,7 +1864,7 @@ class PhysicsChronicles:
             pit_id, _pit = self.pit_at(p["x"] + PLAYER_W / 2)
             if pit_id is not None:
                 p["pit_id"] = pit_id
-                p["pit_damage_at"] = self.frame + 60
+                p["pit_damage_at"] = self.frame
 
         pit_id = p.get("pit_id")
         if pit_id is not None and pit_id < len(self.pits):
@@ -1839,7 +1878,7 @@ class PhysicsChronicles:
             p["jumps_used"] = 0
             if (not was_grounded and p.get("pit_id") is not None
                     and abs(landing - self.pits[p["pit_id"]]["bottom"]) < 1):
-                p["pit_damage_at"] = self.frame + 60
+                p["pit_damage_at"] = self.frame
             if not was_grounded and fall_speed > 7:
                 self.effects.append(["landing", p["x"] + PLAYER_W / 2, landing, 16])
                 self.player_action, self.player_action_until = "land", self.frame + 7
@@ -2052,7 +2091,7 @@ class PhysicsChronicles:
             player_cx = p["x"] + PLAYER_W / 2
             vertical_offset = p["y"] + PLAYER_H / 2 - ey
             close = (abs(player_cx - ex) < (enemy["w"] / 2 + 85)
-                     and -155 <= vertical_offset <= 235)
+                     and -155 <= vertical_offset <= 300)
             if close:
                 before = self.hp
                 self.hurt(30 if rank == "boss" else 32)
@@ -2196,8 +2235,8 @@ class PhysicsChronicles:
             action = "lever"
             warning = 27
         else:
-            action = "wheel_roll"
-            warning = 28
+            action = random.choice(("wheel_roll", "wheel_roll", "catapult_rock"))
+            warning = 28 if action == "wheel_roll" else 42
         self.begin_warning(enemy, action, warning)
 
     def update_enemies(self):
@@ -2298,9 +2337,11 @@ class PhysicsChronicles:
                         and enemy["action"] in ("crossbow", "fan", "intercept", "gunshot")):
                     enemy["target_x"], enemy["target_y"] = self.intercept_point(enemy)
                     if enemy["timer"] <= 0:
-                        enemy["state"], enemy["timer"] = "warning", 18
-                        enemy["telegraph_total"] = 18
-                        enemy["telegraph_end_frame"] = self.frame + 18
+                        # Finish tracking, freeze the predicted point, then fire
+                        # after a readable 0.3 second locked warning.
+                        enemy["locked_target_x"] = enemy["target_x"]
+                        enemy["locked_target_y"] = enemy["target_y"]
+                        enemy["state"], enemy["timer"] = "locked", 18
                 elif enemy["timer"] <= 0:
                     self.launch_enemy_attack(enemy)
                 continue
@@ -2424,9 +2465,14 @@ class PhysicsChronicles:
         self.enemies = [e for e in self.enemies if e["hp"] > 0]
 
     def update_combat(self):
-        if self.frame < self.attack_until:
+        if self.player_action == "slash" and self.frame < self.attack_until:
             progress = self.frame - (self.attack_until - 20)
             if 6 <= progress <= 15:
+                p = self.player
+                swing_y = p["y"] + PLAYER_H * .55
+                swing_x = p["x"] + PLAYER_W / 2
+                self.ignite_tnt(swing_x, swing_y,
+                                swing_x + p["face"] * 150, swing_y)
                 for enemy in self.enemies:
                     # Preserve the established 150px forward / 35px vertical hit range.
                     if id(enemy) not in self.swing_hits and self.in_front(enemy, 150, 35):
@@ -3074,7 +3120,7 @@ class PhysicsChronicles:
             if event["used"] or not self.world_rect_visible(
                     event["x"] - 60, self.ground - 110, event["x"] + 60, self.ground + 8):
                 continue
-            figure = BLESSINGS[CHAPTER_BLESSINGS[event["chapter"]]]["figure"]
+            figure = BLESSINGS[self.blessing_id_for_event(event)]["figure"]
             sx, sy = self.sx(event["x"]), ground
             accent = ERAS[event["chapter"]]["accent"]
             c.create_oval(sx - 28, sy - 82, sx + 28, sy - 25,
@@ -3097,7 +3143,7 @@ class PhysicsChronicles:
 
         if self.midrun_shop_active:
             # A quiet roadside bookstall and healing pigeon sit in the third room.
-            for shelf_x in (SHOP_START_X + 840, SHOP_START_X + 1430):
+            for shelf_x in (NEWTON_STALL_X, SWORD_STALL_X):
                 sx = self.sx(shelf_x)
                 self.rect(sx, ground - 140, sx + 178, ground - 14, "#433a32", "#9a8157")
                 self.rect(sx + 7, ground - 91, sx + 171, ground - 85, "#b29868")
@@ -3117,6 +3163,17 @@ class PhysicsChronicles:
                                   fill="#f4e4ff", outline="")
                     c.create_text(staff_x + 3, ground - 150,
                                   text="뉴턴의 지팡이 · 구매 완료" if self.staff_owned else "뉴턴의 지팡이 · 100 G",
+                                  fill="#ffe2a2", font=("TkDefaultFont", 9, "bold"))
+                else:
+                    sword_x = sx + 88
+                    c.create_line(sword_x, ground - 127, sword_x + 2, ground - 91,
+                                  fill="#d5e0da", width=5)
+                    c.create_line(sword_x - 10, ground - 104, sword_x + 12, ground - 104,
+                                  fill="#b58d58", width=4)
+                    c.create_line(sword_x + 2, ground - 91, sword_x - 5, ground - 82,
+                                  fill="#684b40", width=5)
+                    c.create_text(sword_x + 3, ground - 150,
+                                  text="기본 검 교체 · 100 G" if self.staff_owned else "기본 검 사용 중",
                                   fill="#ffe2a2", font=("TkDefaultFont", 9, "bold"))
 
             bird_x = self.sx(SHOP_BIRD_X)
@@ -3821,7 +3878,7 @@ class PhysicsChronicles:
                 cx, cy = x + w / 2, y + h / 2
                 radius_x = w / 2 + 85
                 c.create_oval(cx - radius_x, cy - 155,
-                              cx + radius_x, cy + 235,
+                              cx + radius_x, cy + 300,
                               fill=danger, stipple="gray12", outline=alert, width=2)
             elif enemy["action"] == "parabola":
                 tx, ty = self.sx(enemy.get("target_x", 0)), self.sy(enemy.get("target_y", 0))
@@ -4695,9 +4752,13 @@ class PhysicsChronicles:
                           and abs(self.player["x"] - SHOP_BIRD_X) < 155)
         near_staff_stall = (self.midrun_shop_active
                             and abs(self.player["x"] - NEWTON_STALL_X) < 155)
+        near_sword_stall = (self.midrun_shop_active
+                            and abs(self.player["x"] - SWORD_STALL_X) < 110)
         ability_text = (f"비둘기 · {self.key_label(self.controls['interact'])} 메뉴 · 1 회복 50 G / 2 가호 소환 500 G" if near_shop_bird else
                         f"뉴턴의 지팡이 · {self.key_label(self.controls['shop_staff'])}/{self.key_label(self.controls['interact'])} 구매 100 G" if near_staff_stall and not self.staff_owned else
                         f"지팡이 보유 · {self.key_label(self.controls['attack'])} 중력 강타 · {self.key_label(self.controls['ranged'])} 운석" if near_staff_stall and self.staff_owned else
+                        f"기본 검으로 교체 · {self.key_label(self.controls['interact'])} · 100 G" if near_sword_stall and self.staff_owned else
+                        "기본 검 사용 중" if near_sword_stall else
                         f"안전 상점 · 지팡이 100 G · 완전 회복 50 G · {self.key_label(self.controls['interact'])} 레버" if self.midrun_shop_active and not self.shop_exit_open else
                         "상점 출구 개방 · 오른쪽으로 이동해 다음 구역으로" if self.midrun_shop_active else
                         f"허수아비 누적 피해 {self.training_damage}  ·  출구에서 {self.key_label(self.controls['interact'])}" if self.in_shop else
