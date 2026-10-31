@@ -1,4 +1,4 @@
-<!doctype html>
+https://<!doctype html>
 <html lang="ko">
 <head>
   <meta charset="utf-8">
@@ -233,7 +233,7 @@ root.canvas.dispatch_configure(1100, 700)
 game.draw()
 root.canvas.flush()
 `);
-      const keyDown=pyodide.globals.get('browser_key_down'),keyUp=pyodide.globals.get('browser_key_up');
+      const keyDown=key=>pyodide.runPython(`browser_key_down(${JSON.stringify(key)})`),keyUp=key=>pyodide.runPython(`browser_key_up(${JSON.stringify(key)})`);
       window.browserGame={keyDown,keyUp};
       status.textContent='원본 Physics Chronicles 실행 중';
       loading.style.display='none';
