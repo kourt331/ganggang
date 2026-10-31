@@ -244,7 +244,7 @@
     button.addEventListener('pointercancel',up);
     button.addEventListener('lostpointercapture',up);
   });
-  document.getElementById('fullscreen').addEventListener('click',()=>window.gameBridge.setFullscreen(!window.gameBridge.isFullscreen()));
+  startButton.addEventListener('click',startGame); document.getElementById('fullscreen').addEventListener('click',()=>window.gameBridge.setFullscreen(!window.gameBridge.isFullscreen()));
 
   async function fetchGameFile(file){
     let pagesResponse;
@@ -326,7 +326,7 @@
       keyFn=pythonRuntime.runPython('browser_key');
       status.textContent='준비 완료 · 방향키로 이동';
       loading.style.display='none';
-      focusGame();
+      startButton.disabled=false; startButton.textContent='게임 시작';
       gameFrameRequest=window.requestAnimationFrame(driveGameFrame);
     }catch(error){window.gameBridge.showError(error?.stack||error);}
   }
