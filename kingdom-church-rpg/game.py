@@ -13,6 +13,8 @@ MAP_SIZE = {
     "숲": (2400, 1600), "마을": (1400, 1000), "교회 밖": (1200, 900), "교회 안": (960, 720),
     "왕실 상점가": (1200, 900), "왕국 기사단": (1000, 760), "왕국 안": (1000, 760), "왕의 방": (900, 650),
 }
+WEAPON_BONUS = {"낡은 검":0,"철검":5,"사냥꾼 활":8}
+ARMOR_BONUS = {"여행자 옷":0,"가죽 갑옷":3,"방랑자 외투":2,"기사 갑옷":6}
 
 class Game:
     def __init__(self):
@@ -187,6 +189,47 @@ class Game:
         else:self.say(intro[dest])
 
     def open_dialog(self, title, text, options): self.dialog={"title":title,"text":text,"options":options}
+
+    def shop_price(self, base):
+        return base if self.player["race"]=="인간" else math.ceil(base*1.05)
+
+    def open_shop(self):
+        p=self.player;price=self.shop_price(20)
+        last="물건 훔치기" if p["job"] in ("도둑","도적") else "나가기"
+        self.open_dialog("상점",f"회복 붕대는 최대 체력의 12%를 회복해. 수인 가격 +5%. 현재 {p['gold']}G.",
+                         [f"회복 붕대 구매 · {price}G","무기 진열장","방어구 진열장",last])
+
+    def open_inventory(self):
+        p=self.player
+        text=f"무기: {p['weapon']} (공격 {p['atk']})\n방어구: {p['armor']} (방어 {p['def']})\n종교: {p['religion']}\n회복 붕대: {p['bandages']}개 · {p['gold']}G"
+        self.open_dialog("소지품",text,["회복 붕대 사용","무기 바꾸기","방어구 바꾸기","닫기"])
+
+    def equip_weapon(self, name):
+        p=self.player;owned=p.setdefault("owned_weapons",[p.get("weapon","낡은 검")])
+        if name not in owned:self.say("가지고 있지 않은 무기다.");return
+        if name==p["weapon"]:self.say(f"{name}을(를) 이미 장착했다.");return
+        change=WEAPON_BONUS.get(name,0)-WEAPON_BONUS.get(p["weapon"],0)
+        p["weapon"]=name;p["atk"]+=change;self.say(f"{name} 장착. 공격력이 {change:+d} 변했다.")
+
+    def equip_armor(self, name):
+        p=self.player;owned=p.setdefault("owned_armor",[p.get("armor","여행자 옷")])
+        if name not in owned:self.say("가지고 있지 않은 방어구다.");return
+        if name==p["armor"]:self.say(f"{name}을(를) 이미 장착했다.");return
+        change=ARMOR_BONUS.get(name,0)-ARMOR_BONUS.get(p["armor"],0)
+        p["armor"]=name;p["def"]+=change;self.say(f"{name} 장착. 방어력이 {change:+d} 변했다.")
+
+    def buy_weapon(self, name, base_price):
+        p=self.player;owned=p.setdefault("owned_weapons",[p.get("weapon","낡은 검")]);price=self.shop_price(base_price)
+        if name in owned:self.say(f"{name}은(는) 이미 가지고 있다.");return
+        if p["gold"]<price:self.say("소지금이 부족하다.");return
+        p["gold"]-=price;owned.append(name);p.setdefault("inventory",[]).append(name);self.equip_weapon(name)
+
+    def buy_armor(self, name, base_price):
+        p=self.player;owned=p.setdefault("owned_armor",[p.get("armor","여행자 옷")]);price=self.shop_price(base_price)
+        if name in owned:self.say(f"{name}은(는) 이미 가지고 있다.");return
+        if p["gold"]<price:self.say("소지금이 부족하다.");return
+        p["gold"]-=price;owned.append(name);p.setdefault("inventory",[]).append(name);self.equip_armor(name)
+
     def interact(self):
         ent=self.nearest()
         if not ent: self.say("주변에 상호작용할 대상이 없어. 사람이나 시설 가까이 가서 E를 눌러봐.");return
@@ -209,11 +252,7 @@ class Game:
         if kind=="knight_hunters":
             self.open_dialog("기사단 추격대","왕실에서 방랑 기사를 추격해왔다. 싸우거나 기사단으로 돌아갈 수 있다.",["기사단과 싸운다","기사단에 다시 들어간다"]);return
         if kind=="shop":
-            price=20 if p["race"]=="인간" else 21
-            weapon_price=60 if p["race"]=="인간" else 63
-            armor_price=55 if p["race"]=="인간" else 58
-            last="물건 훔치기" if p["job"] in ("도둑","도적") else "나가기"
-            self.open_dialog("상점",f"회복 붕대는 최대 체력의 12%를 회복해. 수인 가격 +5%. 현재 {p['gold']}G.",[f"회복 붕대 구매 · {price}G",f"철검 구매 · {weapon_price}G",f"갑옷 구매 · {armor_price}G",last]);return
+            self.open_shop();return
         if kind=="camp":
             if p["faction"]!="방랑자": self.open_dialog("방랑자 야영지","방랑자와 함께하거나, 이 진영을 떠나 다른 길을 찾을 수 있다.",["방랑자 진영에 합류","도둑 직업 얻기","다른 진영으로 떠나기"])
             elif p["job"]!="도둑": self.open_dialog("방랑자 야영지","숲의 방랑자들은 왕실을 피해 떠돌아. 도둑의 길을 배울 수 있다.",["도둑 직업 얻기","마을로 향하기","방랑자 진영에서 탈퇴"])
@@ -328,24 +367,17 @@ class Game:
             else:self.say("전투를 피했다.")
             return
         if title=="상점":
-            bandage_price=20 if p["race"]=="인간" else 21
-            weapon_price=60 if p["race"]=="인간" else 63
-            armor_price=55 if p["race"]=="인간" else 58
             if idx==0:
+                bandage_price=self.shop_price(20)
                 if p["gold"]>=bandage_price:p["gold"]-=bandage_price;p["bandages"]+=1;p["inventory"].append("회복 붕대");self.say("회복 붕대를 샀다.")
                 else:self.say("소지금이 부족하다.")
             elif idx==1:
-                owned=p.setdefault("owned_weapons",[p.get("weapon","낡은 검")])
-                if "철검" in owned:self.say("철검은 이미 가지고 있다.")
-                elif p["gold"]>=weapon_price:
-                    p["gold"]-=weapon_price;owned.append("철검");p["weapon"]="철검";p["atk"]+=5;self.say("철검을 장착했다. 공격력이 5 올랐다.")
-                else:self.say("소지금이 부족하다.")
+                self.open_dialog("무기 진열장","구매한 무기는 소지품에서 다시 바꿔 장착할 수 있다.",[
+                    f"철검 · {self.shop_price(60)}G · 공격 +5",f"사냥꾼 활 · {self.shop_price(85)}G · 공격 +8","상점으로 돌아가기"])
             elif idx==2:
-                owned=p.setdefault("owned_armor",[p.get("armor","여행자 옷")])
-                if "가죽 갑옷" in owned:self.say("가죽 갑옷은 이미 가지고 있다.")
-                elif p["gold"]>=armor_price:
-                    p["gold"]-=armor_price;owned.append("가죽 갑옷");p["armor"]="가죽 갑옷";p["def"]+=3;self.say("가죽 갑옷을 장착했다. 방어력이 3 올랐다.")
-                else:self.say("소지금이 부족하다.")
+                self.open_dialog("방어구 진열장","보유 방어구는 소지품에서 다시 바꿔 장착할 수 있다.",[
+                    f"가죽 갑옷 · {self.shop_price(55)}G · 방어 +3",f"방랑자 외투 · {self.shop_price(75)}G · 방어 +2",
+                    f"기사 갑옷 · {self.shop_price(120)}G · 방어 +6","상점으로 돌아가기"])
             elif idx==3 and opt=="물건 훔치기":
                 if random.random()<.55:
                     self.enemies.append({"name":"상점 주인","x":280,"y":300,"hp":48,"maxhp":48,"atk":8,"level":1,"alive":True,"human":True})
@@ -353,11 +385,38 @@ class Game:
                 else:
                     p["gold"]+=25;p["inventory"].append("훔친 물건");self.say("들키지 않고 물건을 훔쳤다. 25G 상당의 물건을 챙겼다.")
             return
+        if title=="무기 진열장":
+            if idx==0:self.buy_weapon("철검",60)
+            elif idx==1:self.buy_weapon("사냥꾼 활",85)
+            elif idx==2:self.open_shop()
+            return
+        if title=="방어구 진열장":
+            if idx==0:self.buy_armor("가죽 갑옷",55)
+            elif idx==1:self.buy_armor("방랑자 외투",75)
+            elif idx==2:self.buy_armor("기사 갑옷",120)
+            elif idx==3:self.open_shop()
+            return
         if title=="소지품":
             if opt=="회복 붕대 사용":
                 if p["bandages"]>0:
-                    healed=max(1,round(p["maxhp"]*.12));p["hp"]=min(p["maxhp"],p["hp"]+healed);p["bandages"]-=1;self.say(f"회복 붕대를 사용해 HP {healed} 회복.")
+                    if p["hp"]>=p["maxhp"]:self.say("체력이 가득 차 있어 회복 붕대를 아꼈다.")
+                    else:
+                        healed=max(1,round(p["maxhp"]*.12));p["hp"]=min(p["maxhp"],p["hp"]+healed);p["bandages"]-=1;self.say(f"회복 붕대를 사용해 HP {healed} 회복.")
                 else:self.say("회복 붕대가 없어.")
+            elif opt=="무기 바꾸기":
+                owned=p.setdefault("owned_weapons",[p.get("weapon","낡은 검")])
+                self.open_dialog("무기 장착",f"현재 장착: {p['weapon']} · 공격 {p['atk']}",owned[:3]+["취소"])
+            elif opt=="방어구 바꾸기":
+                owned=p.setdefault("owned_armor",[p.get("armor","여행자 옷")])
+                self.open_dialog("방어구 장착",f"현재 장착: {p['armor']} · 방어 {p['def']}",owned[:3]+["취소"])
+            return
+        if title=="무기 장착":
+            if opt=="취소":self.open_inventory()
+            else:self.equip_weapon(opt)
+            return
+        if title=="방어구 장착":
+            if opt=="취소":self.open_inventory()
+            else:self.equip_armor(opt)
             return
         if title=="방랑자 야영지":
             if opt=="방랑자 진영에 합류":
@@ -471,7 +530,9 @@ class Game:
         elif action=="defend":b["defending"]=True;b["log"]="방어 자세를 취했다. 이번 적의 공격은 무효가 된다.";b["effect"]="shield";b["effect_t"]=.4
         elif action=="item":
             if p["bandages"]>0:
-                healed=max(1,round(p["maxhp"]*.12));p["hp"]=min(p["maxhp"],p["hp"]+healed);p["bandages"]-=1;b["log"]=f"회복 붕대를 사용해 HP {healed} 회복."
+                if p["hp"]>=p["maxhp"]:b["log"]="체력이 가득 차 있어 회복 붕대를 아꼈다."
+                else:
+                    healed=max(1,round(p["maxhp"]*.12));p["hp"]=min(p["maxhp"],p["hp"]+healed);p["bandages"]-=1;b["log"]=f"회복 붕대를 사용해 HP {healed} 회복."
             else:b["log"]="회복 붕대가 없다. 마을 상점에서 구매할 수 있다."
             return
         elif action=="flee":
@@ -577,13 +638,14 @@ class Game:
         if self.mode=="battle":self.draw();return
         for k in presses:
             if k in ("e","E","Enter"):self.interact()
-            elif k in ("i","I"):self.open_dialog("소지품",f"무기: {p['weapon']}\n방어구: {p['armor']}\n종교: {p['religion']}\n회복 붕대: {p['bandages']}개\n골드: {p['gold']}G",["회복 붕대 사용","닫기"])
+            elif k in ("i","I"):self.open_inventory()
             elif k in ("q","Q"):
                 q=p["quest"]
                 self.open_dialog("퀘스트 기록",f"진영: {p['faction']} · 직업: {p['job']} · 종교: {p['religion']}\n의뢰: {q['title'] if q else '없음'}\n교회 의뢰 거절: {p['priest_refusals']}/3\n기도 가능/완료: {p['church_quests_completed']}/{p['prayer_count']} (성전사 10회)\n왕실 의뢰: {p['king_quests']}/10",["닫기"])
             elif k in ("h","H"):
                 healed=max(1,round(p["maxhp"]*.12))
-                if p["bandages"]:p["bandages"]-=1;p["hp"]=min(p["maxhp"],p["hp"]+healed);self.say(f"회복 붕대 사용: HP {healed} 회복.")
+                if p["bandages"] and p["hp"]>=p["maxhp"]:self.say("체력이 가득 차 있어 회복 붕대를 아꼈다.")
+                elif p["bandages"]:p["bandages"]-=1;p["hp"]=min(p["maxhp"],p["hp"]+healed);self.say(f"회복 붕대 사용: HP {healed} 회복.")
                 else:self.say("회복 붕대가 없어.")
         self.draw()
 
@@ -594,13 +656,15 @@ class Game:
     def polygon(self,points,fill,outline=None):return {"t":"p","pts":points,"c":fill,"o":outline}
     def text(self,x,y,s,size=16,color="#f6eddb",align="left"):return {"t":"t","x":x,"y":y,"s":str(s),"size":size,"c":color,"a":align}
 
-    def draw_character(self,out,x,y,name,job="주민",race="인간",faction="마을",scale=1.0):
+    def draw_character(self,out,x,y,name,job="주민",race="인간",faction="마을",scale=1.0,weapon=None,armor=None):
         s=scale
         palettes={"교회":("#d8d8cd","#566782","#cfb66d"),"왕실":("#9a4e47","#ddd2b6","#d9b96d"),"방랑자":("#594a3c","#292b31","#a9784f"),"마을":("#6d7651","#9b7558","#d1b27c")}
         coat,trim,metal=palettes.get(faction,palettes["마을"])
         if job in ("성직자","교황","성인"):coat,trim,metal="#e1ddcd","#536183","#e7cf84"
         if job in ("기사","기사단장","전사"):coat,trim,metal="#77808b","#d7d0c1","#c9aa67"
         if job in ("도둑","도적","암살자"):coat,trim,metal="#35343e","#514553","#a87855"
+        armor_colors={"가죽 갑옷":("#795239","#b48456","#e0c18a"),"방랑자 외투":("#334b3a","#687a50","#b89b62"),"기사 갑옷":("#9ba5af","#d9dedc","#e4c979")}
+        if armor in armor_colors:coat,trim,metal=armor_colors[armor]
         skin="#dfb999" if race=="인간" else "#d5a982"
         hair="#382b2a" if race=="인간" else "#593d35"
         # ground shadow, boots, cloak, tunic, arms, head and hair
@@ -617,7 +681,11 @@ class Game:
         out.append(self.circle(x-3*s,y-13*s,1.3*s,"#292323"));out.append(self.circle(x+3*s,y-13*s,1.3*s,"#292323"))
         if job in ("성직자","교황","성인"):out.append(self.line(x,y-4*s,x,y+5*s,metal,2*s));out.append(self.line(x-3*s,y,x+3*s,y,metal,2*s))
         if job in ("전사","기사","기사단장","도둑","도적","암살자"):
-            out.append(self.line(x+13*s,y+4*s,x+20*s,y-11*s,metal,2*s));out.append(self.line(x+10*s,y+6*s,x+16*s,y+9*s,"#49352b",3*s))
+            if weapon=="사냥꾼 활":
+                out.append(self.line(x+13*s,y-12*s,x+21*s,y-6*s,"#895b38",3*s));out.append(self.line(x+21*s,y-6*s,x+21*s,y+5*s,"#b18452",3*s));out.append(self.line(x+21*s,y+5*s,x+13*s,y+11*s,"#895b38",3*s));out.append(self.line(x+13*s,y-12*s,x+13*s,y+11*s,"#ead8ad",1.3*s))
+            else:
+                length=24 if weapon=="철검" else 20
+                out.append(self.line(x+13*s,y+4*s,x+(13+length*.35)*s,y-length*.8*s,metal,2.4*s));out.append(self.line(x+10*s,y+6*s,x+16*s,y+9*s,"#49352b",3*s))
         if job in ("왕","군주"):out.append(self.polygon([x-7*s,y-19*s,x-6*s,y-27*s,x-2*s,y-22*s,x+2*s,y-28*s,x+5*s,y-21*s,x+8*s,y-25*s,x+8*s,y-18*s],"#d2ad55"))
         out.append(self.text(x,y+27*s,name,11*s,"#fff3d9","center"))
 
@@ -694,7 +762,7 @@ class Game:
                 faction="교회" if kind in ("priest","trainer_church","altar","field","cleaning") else "왕실" if kind in ("trainer_kingdom","king","knight_hunters") else "방랑자" if kind in ("camp","wanderer_party") else "마을"
                 race="수인" if kind in ("villager","wanderer_party") and (int(x+y)//80)%3==0 else "인간"
                 self.draw_character(out,X,Y,name,role,race,faction,.86)
-        self.draw_character(out,sx(p["x"]),sy(p["y"]),p["name"],p["job"],p["race"],p["faction"],1.0)
+        self.draw_character(out,sx(p["x"]),sy(p["y"]),p["name"],p["job"],p["race"],p["faction"],1.0,p.get("weapon"),p.get("armor"))
         out.append(self.rect(0,0,W,67,"#111b24"));out.append(self.text(20,18,"왕실과 교회의 전쟁 · 제1장",18,"#f1d39a"));out.append(self.text(20,45,f"{p['name']} · {p['race']} · {p['gender']} · {p['religion']} · {p['faction']} / {p['job']}",12))
         out.append(self.text(690,20,f"HP {p['hp']}/{p['maxhp']}   MP {p['mp']}/{p['maxmp']}",14,"#e7e9dc"));out.append(self.text(690,45,f"Lv.{p['level']}   {p['gold']}G   붕대 {p['bandages']}개",13,"#e7e9dc"))
         out.append(self.rect(20,557,920,30,"#111b24dd"));out.append(self.text(32,572,f"{self.area}  ·  WASD/방향키 이동  ·  E 상호작용  ·  Q 퀘스트  ·  I 소지품  ·  H 붕대",13,"#e8ddc8"))
@@ -709,7 +777,7 @@ class Game:
             out.append(self.text(245,150,p["name"],17,"#f5ecd9","center"));out.append(self.text(705,150,e["name"],17,"#f5ecd9","center"))
             out.append(self.rect(145,170,200,13,"#351f25"));out.append(self.rect(145,170,200*max(0,p["hp"])/p["maxhp"],13,"#76ae77"));out.append(self.text(245,194,f"HP {p['hp']}/{p['maxhp']} · MP {p['mp']}/{p['maxmp']}",12,"#e7e3da","center"))
             out.append(self.rect(605,170,200,13,"#351f25"));out.append(self.rect(605,170,200*max(0,e["hp"])/e["maxhp"],13,"#c8564d"));out.append(self.text(705,194,f"HP {max(0,e['hp'])}/{e['maxhp']} · Lv.{e['level']}",12,"#e7e3da","center"))
-            self.draw_character(out,285,325,p["name"],p["job"],p["race"],p["faction"],1.85)
+            self.draw_character(out,285,325,p["name"],p["job"],p["race"],p["faction"],1.85,p.get("weapon"),p.get("armor"))
             if e.get("human"):self.draw_character(out,675,325,e["name"],"기사" if "기사" in e["name"] else "상인","인간","왕실",1.65)
             else:self.draw_monster(out,675,325,e["name"],1.65)
             if b.get("effect_t",0)>0:

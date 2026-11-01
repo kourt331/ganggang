@@ -175,14 +175,67 @@ class GameRegressionTests(unittest.TestCase):
         g = self.new_game()
         p = g.player
         p["gold"] = 500
-        g.open_dialog("상점", "", ["붕대", "철검", "갑옷", "나가기"])
+        g.open_shop()
         g.choose(1)
+        self.assertEqual(g.dialog["title"], "무기 진열장")
+        g.choose(0)
         attack_after_purchase = p["atk"]
         gold_after_purchase = p["gold"]
-        g.open_dialog("상점", "", ["붕대", "철검", "갑옷", "나가기"])
+        g.open_shop()
         g.choose(1)
+        g.choose(0)
         self.assertEqual(p["atk"], attack_after_purchase)
         self.assertEqual(p["gold"], gold_after_purchase)
+
+    def test_beastkin_pays_five_percent_more_for_equipment(self):
+        g = self.new_game()
+        g.player["race"] = "수인"
+        self.assertEqual(g.shop_price(20), 21)
+        self.assertEqual(g.shop_price(60), 63)
+        self.assertEqual(g.shop_price(55), 58)
+
+    def test_owned_weapons_can_be_swapped_without_losing_level_stats(self):
+        g = self.new_game()
+        p = g.player
+        p["gold"] = 500
+        g.gain_xp(35)
+        level_attack = p["atk"]
+        g.buy_weapon("철검", 60)
+        iron_attack = p["atk"]
+        g.buy_weapon("사냥꾼 활", 85)
+        self.assertEqual(p["weapon"], "사냥꾼 활")
+        self.assertEqual(p["atk"], level_attack + 8)
+        g.open_inventory()
+        g.choose(1)
+        g.choose(1)
+        self.assertEqual(p["weapon"], "철검")
+        self.assertEqual(p["atk"], iron_attack)
+
+    def test_owned_armor_can_be_swapped_without_losing_level_stats(self):
+        g = self.new_game()
+        p = g.player
+        p["gold"] = 500
+        g.gain_xp(35)
+        level_defense = p["def"]
+        g.buy_armor("가죽 갑옷", 55)
+        leather_defense = p["def"]
+        g.buy_armor("기사 갑옷", 120)
+        self.assertEqual(p["def"], level_defense + 6)
+        g.open_inventory()
+        g.choose(2)
+        g.choose(0)
+        self.assertEqual(p["armor"], "여행자 옷")
+        self.assertEqual(p["def"], level_defense)
+        self.assertGreater(leather_defense, level_defense)
+
+    def test_equipped_weapon_and_armor_change_character_render_data(self):
+        g = self.new_game()
+        shapes = []
+        g.draw_character(shapes, 100, 100, "검증", "전사", "인간", "왕실", 1.0,
+                         weapon="사냥꾼 활", armor="기사 갑옷")
+        colors = {shape.get("c") for shape in shapes}
+        self.assertIn("#9ba5af", colors)
+        self.assertIn("#895b38", colors)
 
     def test_attack_opens_skill_choices_before_damage(self):
         g = self.new_game()
@@ -214,6 +267,17 @@ class GameRegressionTests(unittest.TestCase):
         g.battle_action("item")
         self.assertEqual(g.player["hp"], 62)
         self.assertEqual(g.player["bandages"], 1)
+        self.assertEqual(g.enemies[0]["hp"], 90)
+
+    def test_bandage_is_not_wasted_at_full_health(self):
+        g = self.new_game()
+        p = g.player
+        p.update(hp=100, maxhp=100, bandages=1)
+        g.enemies = [{"name":"늑대","x":400,"y":300,"hp":90,"maxhp":90,
+                      "atk":1,"level":1,"alive":True}]
+        g.start_battle(0)
+        g.battle_action("item")
+        self.assertEqual(p["bandages"], 1)
         self.assertEqual(g.enemies[0]["hp"], 90)
 
     def test_forest_walk_triggers_an_immediate_ambush(self):
