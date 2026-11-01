@@ -35,15 +35,17 @@ class Game:
         starts = ["숲", "교회 밖", "왕실 상점가"] if race == "인간" else ["숲", "교회 밖"]
         area = random.choice(starts)
         faction = {"숲":"방랑자", "교회 밖":"교회", "왕실 상점가":"왕실"}[area]
+        religion = {"숲":"숲의 신앙", "교회 밖":"교회 신앙", "왕실 상점가":"왕실 신앙"}[area]
         mw,mh=MAP_SIZE[area]
         self.player = {
-            "name": (name or "이름 없는 여행자")[:14], "race":race, "gender":gender,
+            "name": (name or "이름 없는 여행자")[:14], "race":race, "gender":gender,"religion":religion,
             "area":area,"faction":faction,"job":"미정","x":mw//2,"y":mh//2,
             "hp":100,"maxhp":100,"mp":30,"maxmp":30,"level":1,"xp":0,
             "gold":80,"bandages":1,"weapon":"낡은 검","armor":"여행자 옷",
             "atk":10,"def":3,"quest":None,"quest_kills":0,"priest_refusals":0,
             "prayer_count":0,"church_quests_completed":0,"prayer_due":False,"king_quests":0,"exiled":False,
             "bandit_unlocked":False,"visited_faction":faction,"promoted":False,
+            "owned_weapons":["낡은 검"],"owned_armor":["여행자 옷"],
             "inventory":["낡은 검","여행자 옷","회복 붕대 ×1"],"story_flags":[]
         }
         self.player["visited_faction"]=area
@@ -58,7 +60,8 @@ class Game:
         lines={"교회 밖":"성직자가 전쟁의 불길이 번진 숲을 바라본다. 교회 안으로 들어가 전사나 신자의 길을 얻을 수 있다.",
                "왕실 상점가":"왕실 도시의 상점가. 기사단으로 향하는 길과 궁성으로 향하는 성문이 있다.",
                "숲":"숲의 방랑자들이 불가에 모여 있다. 마을과 교회는 숲의 마물 때문에 긴장하고, 왕실은 방랑자의 출입을 금한다."}
-        return f"{p['race']} · {p['gender']}\n{lines[p['area']]}"
+        faith={"교회 신앙":"기도는 교회에 힘을 보탠다.","왕실 신앙":"왕실의 서약은 전쟁의 승리를 약속한다.","숲의 신앙":"숲의 옛 신앙은 방랑자와 수인 사이에 남아 있다."}
+        return f"{p['race']} · {p['gender']} · {p['religion']}\n{lines[p['area']]} {faith[p['religion']]}"
 
     def say(self, text, seconds=4): self.notice=str(text); self.notice_t=seconds
     def gain_xp(self, amount):
@@ -110,9 +113,9 @@ class Game:
         p=self.player
         royal_areas=("왕실 상점가","왕국 기사단","왕국 안","왕의 방")
         church_areas=("교회 밖","교회 안")
-        if p["prayer_due"] and dest not in church_areas+ ("마을",):
+        if p["prayer_due"] and p["faction"] == "교회" and dest not in church_areas+ ("마을",):
             self.exile_church();return
-        if p["prayer_due"] and p["area"] in church_areas and dest=="마을":
+        if p["prayer_due"] and p["faction"] == "교회" and p["area"] in church_areas and dest=="마을":
             self.exile_church();return
         if dest in royal_areas and (p["race"]=="수인" or p["faction"]=="방랑자"):
             self.say("성문 경비가 길을 막는다. 수인과 방랑자 진영은 왕실 구역에 들어갈 수 없다.");p["x"]=max(80,min(MAP_SIZE[self.area][0]-80,p["x"]));return
@@ -124,6 +127,7 @@ class Game:
         }
         p["area"]=dest;p["visited_faction"]=dest;self.area=dest
         p["x"],p["y"]=entry[dest]
+        self.walk_meter=0
         self.spawn_enemies()
         intro={
             "숲":"나무와 바위가 이어지는 넓은 숲. 방랑자 무리가 숲길을 떠돌고, 마물이 배회한다.",
@@ -155,8 +159,9 @@ class Game:
         if kind=="sign":self.say("숲은 넓다. 길을 잃지 않도록 동쪽 끝의 마을 길을 찾아가자.");return
         if kind=="enemy": self.start_battle(extra[0]);return
         if kind=="wanderer_party":
-            if p["faction"]=="방랑자":self.open_dialog("방랑자 집단","떠돌이 무리가 숲길을 따라 이동 중이다.",["함께 이동하기","나가기"])
-            else:self.open_dialog("방랑자 집단","방랑자 무리가 숲에서 이동하고 있다. 함께하기 위해서는 진영을 바꿔야 한다.",["방랑자 진영에 합류","대화하기","나가기"])
+            welcome="숲의 신앙을 가진 수인에게 무리가 반갑게 길을 내준다." if p["religion"]=="숲의 신앙" or p["race"]=="수인" else "숲의 방랑자들이 낯선 신앙을 살피며 조심스럽게 지켜본다."
+            if p["faction"]=="방랑자":self.open_dialog("방랑자 집단",f"{welcome} 떠돌이 무리가 숲길을 따라 이동 중이다.",["함께 이동하기","나가기"])
+            else:self.open_dialog("방랑자 집단",f"{welcome} 함께하려면 현재 진영에서 먼저 탈퇴해야 한다.",["방랑자 진영에 합류","대화하기","나가기"])
             return
         if kind=="knight_hunters":
             self.open_dialog("기사단 추격대","왕실에서 방랑 기사를 추격해왔다. 싸우거나 기사단으로 돌아갈 수 있다.",["기사단과 싸운다","기사단에 다시 들어간다"]);return
@@ -164,7 +169,7 @@ class Game:
             price=20 if p["race"]=="인간" else 21
             weapon_price=60 if p["race"]=="인간" else 63
             armor_price=55 if p["race"]=="인간" else 58
-            last="물건 훔치기" if p["job"]=="도둑" else "나가기"
+            last="물건 훔치기" if p["job"] in ("도둑","도적") else "나가기"
             self.open_dialog("상점",f"회복 붕대는 최대 체력의 12%를 회복해. 수인 가격 +5%. 현재 {p['gold']}G.",[f"회복 붕대 구매 · {price}G",f"철검 구매 · {weapon_price}G",f"갑옷 구매 · {armor_price}G",last]);return
         if kind=="camp":
             if p["faction"]!="방랑자": self.open_dialog("방랑자 야영지","방랑자와 함께하거나, 이 진영을 떠나 다른 길을 찾을 수 있다.",["방랑자 진영에 합류","도둑 직업 얻기","다른 진영으로 떠나기"])
@@ -172,21 +177,25 @@ class Game:
             else:self.open_dialog("방랑자 야영지","야영지에서 잠시 숨을 돌린다.",["마을로 향하기","방랑자 진영에서 탈퇴"])
             return
         if kind=="trainer_church":
+            if p["faction"] not in ("교회", "무소속"):
+                self.open_dialog("교회 수련관","다른 진영의 직업을 버린 뒤에만 교회 직업을 얻을 수 있다. 먼저 현재 진영에서 탈퇴하자.",["다른 진영을 찾아 떠나기","나가기"]);return
             if p["prayer_due"]:self.open_dialog("교회 수련관","완료한 의뢰에 대한 기도를 먼저 마쳐야 한다.",["나가기"])
             else:self.open_dialog("교회 수련관",f"교회 직업은 전사와 신자야. 현재 직업 {p['job']} · 기도 {p['prayer_count']}/10. 다른 진영에서 왔다면 교회 직업을 새로 선택할 수 있어.",["전사로 수련 시작","신자로 수련 시작","다른 진영을 찾아 떠나기"])
             return
         if kind=="priest":
+            faith_note="자네의 왕실 신앙은 교회의 가르침과 다르네. 그래도 교회에 서약한 동안은 의뢰를 맡을 수 있네." if p["religion"]=="왕실 신앙" else "숲의 신앙을 가진 이도 교회에 서약하면 의뢰를 맡을 수 있네." if p["religion"]=="숲의 신앙" else "기도의 뜻을 아는 자로군."
             if p["faction"]!="교회":self.open_dialog("성직자","교회 진영에 속한 직업만 교회 스토리 의뢰를 받을 수 있다. 교회 수련관에서 합류할 수 있다.",["나가기"])
             elif p["job"]=="신자":
                 prayer_option="기도 의뢰" if p["prayer_count"]<p["church_quests_completed"] else "나가기"
-                self.open_dialog("성직자","교회 일을 도와주게. 완료한 성직자 의뢰 횟수만큼 기도할 수 있다. 세 번 이상 거절하면 직업 승급 자격을 잃는다.",["밭에 물 주기 의뢰","교회 청소 의뢰",prayer_option,"의뢰 거절"])
-            elif p["job"]=="전사":self.open_dialog("성직자","숲에서 마물을 퇴치해주게. 성공하면 반드시 제단에서 기도해야 하네.",["마물 퇴치 의뢰","의뢰 거절","나가기"])
+                self.open_dialog("성직자",f"{faith_note} 교회 일을 도와주게. 완료한 성직자 의뢰 횟수만큼 기도할 수 있다. 세 번 이상 거절하면 직업 승급 자격을 잃는다.",["밭에 물 주기 의뢰","교회 청소 의뢰",prayer_option,"의뢰 거절"])
+            elif p["job"]=="전사":self.open_dialog("성직자",f"{faith_note} 숲에서 마물을 퇴치해주게. 성공하면 반드시 제단에서 기도해야 하네.",["마물 퇴치 의뢰","의뢰 거절","나가기"])
             else:self.open_dialog("성직자","교회 직업을 얻으려면 수련관에서 수련해야 하네. 다른 진영 직업으로는 교회 스토리 의뢰를 받을 수 없어.",["나가기"])
             return
         if kind=="altar":
             if p["prayer_count"]>=p["church_quests_completed"]:
                 self.say(f"기도할 수 있는 횟수가 부족하다. 성직자 의뢰 완료 {p['church_quests_completed']}회 / 기도 {p['prayer_count']}회.");return
             p["prayer_count"]+=1
+            if p["religion"]=="교회 신앙":p["mp"]=min(p["maxmp"],p["mp"]+3)
             if p["prayer_due"]: p["prayer_due"]=False;self.say(f"기도를 마쳤다. 성전사 승급을 향한 기도 {p['prayer_count']}/10.")
             else:self.say(f"조용히 기도했다. 기도 횟수 {p['prayer_count']}/10.")
             if p["job"]=="전사" and p["prayer_count"]>=10 and p["priest_refusals"]<3 and not p["promoted"]:self.promote("성전사")
@@ -196,20 +205,30 @@ class Game:
         if kind=="cleaning": self.complete_simple_quest("교회 청소");return
         if kind=="villager":
             if p["job"] in ("전사","기사"):
-                self.open_dialog("마을 주민","숲에서 마물이 내려와 가축과 주민을 위협하고 있어.",["마물 퇴치 의뢰","의뢰 거절","나가기"])
-            else:self.open_dialog("마을 주민","수인 여행자에게는 경계하는 눈빛을 보낸다. 숲에 사는 이들에게는 친절하다.",["마물 퇴치 의뢰","의뢰 거절","나가기"])
+                text="수인 여행자라면 더 조심해주게." if p["race"]=="수인" else "숲에서 마물이 내려와 가축과 주민을 위협하고 있어."
+                self.open_dialog("마을 주민",text,["마물 퇴치 의뢰","의뢰 거절","나가기"])
+            else:
+                text="수인에게는 낯선 시선을 보낸다. 숲의 방랑자들은 너를 반갑게 맞는다." if p["race"]=="수인" else "숲에서 마물이 내려와 가축과 주민을 위협하고 있어."
+                self.open_dialog("마을 주민",text,["마물 퇴치 의뢰","의뢰 거절","나가기"])
             return
         if kind=="trainer_kingdom":
+            if p["faction"] not in ("왕실", "무소속"):
+                self.open_dialog("왕실 교관","다른 진영의 직업을 버린 뒤에만 왕실 직업을 얻을 수 있다. 먼저 현재 진영에서 탈퇴하자.",["방랑자로 탈출하기","나가기"]);return
             if p["faction"]=="왕실" and p["job"]=="미정":self.open_dialog("왕실 교관","왕실 도시에서 전쟁에 참여할 전사를 모집한다.",["전사로 수련 시작","왕실 토벌 의뢰","방랑자로 탈출하기"])
             elif p["faction"]=="왕실":self.open_dialog("왕실 교관",f"왕실 직업은 전사에서 시작해 기사로 승급해. 현재 직업 {p['job']} · 왕실 의뢰 {p['king_quests']}/10.",["왕실 토벌 의뢰","승급 진행도 확인","방랑자로 탈출하기"])
             else:self.open_dialog("왕실 교관","왕실 직업은 전사로 합류해 시작한다. 방랑자 진영 소속은 왕실에 들어올 수 없다.",["전사로 수련 시작","나가기"])
             return
         if kind=="king":
-            if p["faction"]=="왕실":self.open_dialog("왕","전쟁은 끝날 기미가 없다. 왕실의 이름으로 숲과 방랑자의 문제를 해결하라.",["마물 퇴치 의뢰","나가기"])
+            if p["faction"]=="왕실":
+                faith_note="왕실 신앙의 서약을 기억하라." if p["religion"]=="왕실 신앙" else "교회와 다른 신앙을 가진 자라면 네 충성을 행동으로 보여라." if p["religion"]=="교회 신앙" else "숲의 신앙을 지녔어도 왕실에 서약했다면 백성을 지켜라."
+                self.open_dialog("왕",f"전쟁은 끝날 기미가 없다. {faith_note} 왕실의 이름으로 숲과 방랑자의 문제를 해결하라.",["마물 퇴치 의뢰","나가기"])
             else:self.open_dialog("왕","왕실 소속이 아닌 자는 왕의 명령을 받을 수 없다.",["나가기"])
             return
 
     def accept_quest(self, title, source):
+        if self.player.get("quest"):
+            self.say(f"이미 진행 중인 의뢰가 있다: {self.player['quest']['title']}. 먼저 마무리하자.")
+            return
         self.player["quest"]={"title":title,"source":source,"goal":1,"count":0}
         self.player["quest_kills"]=0
         self.say(f"의뢰 수락: {title}. 숲의 마물을 처치하고 돌아오자.")
@@ -239,13 +258,19 @@ class Game:
         p=self.player; q=p["quest"]
         if not q: return
         source=q.get("source")
-        p["quest"]=None;p["gold"]+=25;self.gain_xp(20)
-        self.say("마물 퇴치 의뢰 완료! 25G와 경험치를 얻었다.")
+        reward=30 if source=="kingdom" and p.get("religion")=="왕실 신앙" else 25
+        p["quest"]=None;p["gold"]+=reward;self.gain_xp(20)
+        self.say(f"마물 퇴치 의뢰 완료! {reward}G와 경험치를 얻었다.")
         self.after_church_quest(source)
 
     def promote(self, job):
         p=self.player;p["job"]=job;p["promoted"]=True
-        self.open_dialog("직업 승급",f"새로운 직업을 얻었다: {job}. 1장의 이야기를 마쳤다.",["1장 마무리"])
+        endings={
+            "성전사":"열 번의 기도 끝에 교회는 너를 성전사로 인정했다. 왕실과 교회의 전쟁은 이제 숲의 마을까지 번져간다.",
+            "기사":"왕실 토벌 열 건을 마친 너는 기사단의 일원이 되었다. 왕의 명령은 숲 너머의 전쟁을 예고한다.",
+            "도적":"사람의 피를 묻힌 순간, 너는 더는 단순한 도둑이 아니게 되었다. 방랑자의 길은 점점 깊어진다."
+        }
+        self.open_dialog("직업 승급",f"새로운 직업을 얻었다: {job}.\n{endings.get(job,'너의 선택이 제1장의 끝을 장식했다.')}\n제1장 완료.",["1장 마무리"])
 
     def choose(self, idx):
         if not self.dialog:return
@@ -267,10 +292,16 @@ class Game:
                 if p["gold"]>=bandage_price:p["gold"]-=bandage_price;p["bandages"]+=1;p["inventory"].append("회복 붕대");self.say("회복 붕대를 샀다.")
                 else:self.say("소지금이 부족하다.")
             elif idx==1:
-                if p["gold"]>=weapon_price:p["gold"]-=weapon_price;p["weapon"]="철검";p["atk"]+=5;self.say("철검을 장착했다. 공격력이 5 올랐다.")
+                owned=p.setdefault("owned_weapons",[p.get("weapon","낡은 검")])
+                if "철검" in owned:self.say("철검은 이미 가지고 있다.")
+                elif p["gold"]>=weapon_price:
+                    p["gold"]-=weapon_price;owned.append("철검");p["weapon"]="철검";p["atk"]+=5;self.say("철검을 장착했다. 공격력이 5 올랐다.")
                 else:self.say("소지금이 부족하다.")
             elif idx==2:
-                if p["gold"]>=armor_price:p["gold"]-=armor_price;p["armor"]="가죽 갑옷";p["def"]+=3;self.say("가죽 갑옷을 장착했다. 방어력이 3 올랐다.")
+                owned=p.setdefault("owned_armor",[p.get("armor","여행자 옷")])
+                if "가죽 갑옷" in owned:self.say("가죽 갑옷은 이미 가지고 있다.")
+                elif p["gold"]>=armor_price:
+                    p["gold"]-=armor_price;owned.append("가죽 갑옷");p["armor"]="가죽 갑옷";p["def"]+=3;self.say("가죽 갑옷을 장착했다. 방어력이 3 올랐다.")
                 else:self.say("소지금이 부족하다.")
             elif idx==3 and opt=="물건 훔치기":
                 if random.random()<.55:
@@ -286,8 +317,12 @@ class Game:
                 else:self.say("회복 붕대가 없어.")
             return
         if title=="방랑자 야영지":
-            if opt=="방랑자 진영에 합류":p["faction"]="방랑자";self.say("방랑자 진영에 합류했다. 왕실 구역에는 들어갈 수 없다.")
-            elif opt=="도둑 직업 얻기":p["job"]="도둑";p["faction"]="방랑자";self.say("도둑의 길을 택했다. 사람을 죽이면 도적으로 승급할 수 있다.")
+            if opt=="방랑자 진영에 합류":
+                if p["faction"] in ("교회","왕실"):self.say("먼저 현재 진영에서 탈퇴해야 한다. 야영지의 '다른 진영으로 떠나기'를 선택하자.")
+                else:p["faction"]="방랑자";self.say("방랑자 진영에 합류했다. 왕실 구역에는 들어갈 수 없다.")
+            elif opt=="도둑 직업 얻기":
+                if p["faction"] in ("교회","왕실"):self.say("먼저 현재 진영에서 탈퇴해야 도둑의 길을 택할 수 있다.")
+                else:p["job"]="도둑";p["faction"]="방랑자";self.say("도둑의 길을 택했다. 사람을 죽이면 도적으로 승급할 수 있다.")
             elif opt=="마을로 향하기":self.move_area("마을")
             elif opt=="다른 진영으로 떠나기" or opt=="방랑자 진영에서 탈퇴":p["faction"]="무소속";self.say("방랑자 진영을 떠나 무소속이 되었다. 인간이라면 왕실에도 들어갈 수 있다.")
             return
@@ -307,7 +342,9 @@ class Game:
             if opt=="전사로 수련 시작":p["job"]="전사";p["faction"]="교회";self.say("교회 전사가 되었다. 의뢰를 성공할 때마다 제단에서 기도하자.")
             elif opt=="신자로 수련 시작":p["job"]="신자";p["faction"]="교회";self.say("교회 신자가 되었다. 성직자에게 교회 일을 받자.")
             elif opt=="교회에서 나가기":self.exile_church()
-            elif opt=="다른 진영을 찾아 떠나기":p["faction"]="무소속";self.move_area("마을")
+            elif opt=="다른 진영을 찾아 떠나기":
+                if p["faction"]=="교회" and p["prayer_due"]:self.exile_church()
+                else:p["faction"]="무소속";self.move_area("마을")
             elif opt=="기도 횟수 확인":self.say(f"현재 기도 횟수 {p['prayer_count']}/10. 교회 퀘스트 거절 {p['priest_refusals']}회.")
             return
         if title=="성직자":
@@ -336,7 +373,7 @@ class Game:
         if title=="교회 수련관" and opt=="교회에서 나가기":self.exile_church()
 
     def exile_church(self):
-        p=self.player;p["faction"]="방랑자";p["exiled"]=True
+        p=self.player;p["faction"]="방랑자";p["exiled"]=True;p["prayer_due"]=False
         self.area="마을";p["area"]="마을";p["x"]=700;p["y"]=500;p["visited_faction"]="마을";self.spawn_enemies()
         self.say("교회에서 추방되었다. 방랑자 진영으로 편입되어 교회에 다시 들어갈 수 없다.")
 
@@ -374,6 +411,7 @@ class Game:
     def battle_action(self, action):
         if not hasattr(self,"battle"):return
         b=self.battle;p=self.player;e=self.enemies[b["index"]]
+        if b.get("won"):return
         if action=="attack":
             b["submenu"]="attack";b["log"]="사용할 공격 기술을 선택해."
             return
@@ -394,19 +432,28 @@ class Game:
             else:b["log"]="회복 붕대가 없다. 마을 상점에서 구매할 수 있다."
             return
         elif action=="flee":
-            chance=max(.1,min(.9,.5+(p["level"]-e["level"])*.15))
+            faith_bonus=.05 if p.get("religion")=="숲의 신앙" else 0
+            chance=max(.1,min(.9,.5+(p["level"]-e["level"])*.15+faith_bonus))
             if random.random()<chance:
                 b["log"]="도주에 성공했다.";self.mode="world";del self.battle;return
             b["log"]="도주에 실패했다!";b["effect"]="miss";b["effect_t"]=.25;b["submenu"]=None
         if e["hp"]<=0:
-            e["alive"]=False;self.mode="world";del self.battle
-            self.gain_xp(12);p["gold"]+=random.randint(8,16)
-            if p["quest"] and p["quest"]["source"] in ("church","village","kingdom"):
-                self.complete_monster_quest()
-            if e.get("human") and p["job"]=="도둑":
-                self.promote("도적");return
-            self.say(f"{e['name']} 처치! 경험치와 골드를 얻었다.");return
+            e["hp"]=0;e["alive"]=False;b["won"]=True;b["effect"]="slash";b["effect_t"]=.55
+            b["submenu"]=None;b["log"]=f"{e['name']}에게 결정타를 날렸다!"
+            return
         self.enemy_turn()
+
+    def finish_battle_victory(self):
+        if not hasattr(self,"battle"):return
+        b=self.battle;p=self.player;e=self.enemies[b["index"]]
+        self.mode="world";del self.battle
+        self.gain_xp(12);p["gold"]+=random.randint(8,16)
+        if not e.get("human") and p.get("quest") and p["quest"].get("source") in ("church","village","kingdom"):
+            p["quest"]["count"]+=1
+            if p["quest"]["count"]>=p["quest"]["goal"]:self.complete_monster_quest()
+        if e.get("human") and p["job"]=="도둑":
+            self.promote("도적");return
+        self.say(f"{e['name']} 처치! 경험치와 골드를 얻었다.")
 
     def enemy_turn(self):
         b=self.battle;p=self.player;e=self.enemies[b["index"]]
@@ -417,8 +464,12 @@ class Game:
         if p["hp"]<=0:
             p["hp"]=p["maxhp"];p["gold"]//=2
             self.area=p["visited_faction"] if p["visited_faction"] in AREAS else "숲"
-            p["area"]=self.area; p["x"]=480;p["y"]=340
+            p["area"]=self.area
+            entry={"숲":(2200,800),"마을":(100,500),"교회 밖":(600,790),"교회 안":(480,640),
+                   "왕실 상점가":(100,450),"왕국 기사단":(500,680),"왕국 안":(500,680),"왕의 방":(450,590)}
+            p["x"],p["y"]=entry[self.area]
             self.mode="world";del self.battle
+            self.walk_meter=0;self.spawn_enemies()
             self.say(f"쓰러졌다. 마지막으로 방문한 진영({p['visited_faction']})에서 눈을 떴다. 보유금 절반을 잃었다.",7)
 
     def handle_dialog_input(self, presses, click):
@@ -442,6 +493,9 @@ class Game:
         if getattr(self,"mode","world")=="battle":
             b=self.battle
             b["effect_t"]=max(0,b.get("effect_t",0)-dt);b["counter_t"]=max(0,b.get("counter_t",0)-dt)
+            if b.get("won"):
+                if b["effect_t"]<=0:self.finish_battle_victory()
+                self.draw();return
             if click:
                 x,y=click
                 if b.get("submenu")=="attack" and 390<=y<=445:
@@ -477,10 +531,10 @@ class Game:
         if self.mode=="battle":self.draw();return
         for k in presses:
             if k in ("e","E","Enter"):self.interact()
-            elif k in ("i","I"):self.open_dialog("소지품",f"무기: {p['weapon']}\n방어구: {p['armor']}\n회복 붕대: {p['bandages']}개\n골드: {p['gold']}G",["회복 붕대 사용","닫기"])
+            elif k in ("i","I"):self.open_dialog("소지품",f"무기: {p['weapon']}\n방어구: {p['armor']}\n종교: {p['religion']}\n회복 붕대: {p['bandages']}개\n골드: {p['gold']}G",["회복 붕대 사용","닫기"])
             elif k in ("q","Q"):
                 q=p["quest"]
-                self.open_dialog("퀘스트 기록",f"진영: {p['faction']} · 직업: {p['job']}\n의뢰: {q['title'] if q else '없음'}\n교회 의뢰 거절: {p['priest_refusals']}/3\n기도 가능/완료: {p['church_quests_completed']}/{p['prayer_count']} (성전사 10회)\n왕실 의뢰: {p['king_quests']}/10",["닫기"])
+                self.open_dialog("퀘스트 기록",f"진영: {p['faction']} · 직업: {p['job']} · 종교: {p['religion']}\n의뢰: {q['title'] if q else '없음'}\n교회 의뢰 거절: {p['priest_refusals']}/3\n기도 가능/완료: {p['church_quests_completed']}/{p['prayer_count']} (성전사 10회)\n왕실 의뢰: {p['king_quests']}/10",["닫기"])
             elif k in ("h","H"):
                 healed=max(1,round(p["maxhp"]*.12))
                 if p["bandages"]:p["bandages"]-=1;p["hp"]=min(p["maxhp"],p["hp"]+healed);self.say(f"회복 붕대 사용: HP {healed} 회복.")
@@ -595,7 +649,7 @@ class Game:
                 race="수인" if kind in ("villager","wanderer_party") and (int(x+y)//80)%3==0 else "인간"
                 self.draw_character(out,X,Y,name,role,race,faction,.86)
         self.draw_character(out,sx(p["x"]),sy(p["y"]),p["name"],p["job"],p["race"],p["faction"],1.0)
-        out.append(self.rect(0,0,W,67,"#111b24"));out.append(self.text(20,18,"왕실과 교회의 전쟁 · 제1장",18,"#f1d39a"));out.append(self.text(20,45,f"{p['name']} · {p['race']} · {p['gender']} · {p['faction']} / {p['job']}",13))
+        out.append(self.rect(0,0,W,67,"#111b24"));out.append(self.text(20,18,"왕실과 교회의 전쟁 · 제1장",18,"#f1d39a"));out.append(self.text(20,45,f"{p['name']} · {p['race']} · {p['gender']} · {p['religion']} · {p['faction']} / {p['job']}",12))
         out.append(self.text(690,20,f"HP {p['hp']}/{p['maxhp']}   MP {p['mp']}/{p['maxmp']}",14,"#e7e9dc"));out.append(self.text(690,45,f"Lv.{p['level']}   {p['gold']}G   붕대 {p['bandages']}개",13,"#e7e9dc"))
         out.append(self.rect(20,557,920,30,"#111b24dd"));out.append(self.text(32,572,f"{self.area}  ·  WASD/방향키 이동  ·  E 상호작용  ·  Q 퀘스트  ·  I 소지품  ·  H 붕대",13,"#e8ddc8"))
         if self.notice_t>0:
