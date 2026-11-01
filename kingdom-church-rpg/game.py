@@ -28,6 +28,7 @@ class Game:
         self.walk_meter = 0
         self.encounter_meter = 0
         self.tick_n = 0
+        self.save_elapsed = 0
 
     def start(self, name):
         race = random.choice(["인간", "수인"])
@@ -54,6 +55,48 @@ class Game:
         self.notice = self.intro_text(); self.notice_t=9
         self.spawn_enemies()
         self.draw()
+        self.persist()
+
+    def save_snapshot(self):
+        data={"version":1,"player":self.player,"area":self.area,"enemies":self.enemies,
+              "wanderers":self.wanderers,"walk_meter":self.walk_meter,"encounter_meter":self.encounter_meter,
+              "mode":getattr(self,"mode","world"),"battle":getattr(self,"battle",None),
+              "dialog":self.dialog,"notice":self.notice,"notice_t":self.notice_t,"tick_n":self.tick_n}
+        return json.dumps(data,ensure_ascii=False,separators=(",",":"))
+
+    def persist(self):
+        if not self.started:return
+        try:window.gameBridge.save(self.save_snapshot())
+        except Exception:pass
+
+    def load_snapshot(self, raw):
+        try:
+            data=json.loads(str(raw))
+            p=data["player"];area=data["area"]
+            if not isinstance(p,dict) or area not in AREAS: return False
+            p=dict(p)
+            p.setdefault("religion",{"숲":"숲의 신앙","교회 밖":"교회 신앙","교회 안":"교회 신앙",
+                                      "왕실 상점가":"왕실 신앙","왕국 기사단":"왕실 신앙","왕국 안":"왕실 신앙","왕의 방":"왕실 신앙"}.get(area,"숲의 신앙"))
+            p.setdefault("owned_weapons",[p.get("weapon","낡은 검")]);p.setdefault("owned_armor",[p.get("armor","여행자 옷")])
+            p.setdefault("quest",None);p.setdefault("exiled",False);p.setdefault("prayer_due",False)
+            p.setdefault("visited_faction",area);p["area"]=area
+            enemies=data.get("enemies",[]);wanderers=data.get("wanderers",[])
+            if not isinstance(enemies,list) or not isinstance(wanderers,list):return False
+            self.player=p;self.area=area;self.enemies=enemies;self.wanderers=wanderers
+            self.walk_meter=max(0,float(data.get("walk_meter",0)));self.encounter_meter=max(0,float(data.get("encounter_meter",0)))
+            self.mode=data.get("mode","world") if data.get("mode") in ("world","battle") else "world"
+            self.dialog=data.get("dialog");self.notice=str(data.get("notice",""));self.notice_t=max(0,float(data.get("notice_t",0)))
+            self.tick_n=max(0,int(data.get("tick_n",0)));self.save_elapsed=0;self.started=True
+            battle=data.get("battle")
+            if self.mode=="battle" and isinstance(battle,dict) and isinstance(battle.get("index"),int) and 0<=battle["index"]<len(enemies):
+                self.battle=battle
+            else:
+                self.mode="world"
+                if hasattr(self,"battle"):del self.battle
+            self.draw();self.persist()
+            return True
+        except Exception:
+            return False
 
     def intro_text(self):
         p=self.player
@@ -486,6 +529,9 @@ class Game:
             held=set(json.loads(held_json)); presses=json.loads(press_json); click=json.loads(click_json) if click_json else None
         except Exception: held=set();presses=[];click=None
         if not self.started:return
+        self.save_elapsed+=max(0,float(dt))
+        if self.save_elapsed>=1.5:
+            self.save_elapsed=0;self.persist()
         self.tick_n+=1
         if self.notice_t>0:self.notice_t-=dt
         if self.dialog:
@@ -689,4 +735,5 @@ class Game:
 
 game=Game()
 def start_game(name): game.start(str(name))
+def resume_game(snapshot): return game.load_snapshot(str(snapshot))
 def tick(dt,held,presses,click): game.tick(float(dt),str(held),str(presses),str(click))

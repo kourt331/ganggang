@@ -48,6 +48,37 @@ class GameRegressionTests(unittest.TestCase):
         self.assertTrue(frames)
         self.assertIsInstance(json.loads(frames[-1]), list)
 
+    def test_save_and_resume_preserve_player_area_quest_and_battle(self):
+        g = self.new_game()
+        g.area = "숲"
+        g.player.update(area="숲", x=1234, y=765, gold=137,
+                        quest={"title":"숲의 마물 퇴치","source":"church","goal":1,"count":0})
+        g.enemies = [{"name":"늑대","x":1200,"y":740,"hp":20,"maxhp":40,
+                      "atk":6,"level":1,"alive":True}]
+        g.start_battle(0)
+        g.battle["submenu"] = "attack"
+        restored = game.Game()
+        self.assertTrue(restored.load_snapshot(g.save_snapshot()))
+        self.assertEqual(restored.player["gold"], 137)
+        self.assertEqual(restored.area, "숲")
+        self.assertEqual(restored.player["quest"]["title"], "숲의 마물 퇴치")
+        self.assertEqual(restored.mode, "battle")
+        self.assertEqual(restored.battle["submenu"], "attack")
+
+    def test_corrupt_save_is_rejected_without_starting_game(self):
+        g = game.Game()
+        self.assertFalse(g.load_snapshot("not valid json"))
+        self.assertFalse(g.started)
+
+    def test_game_autosaves_after_start_and_during_play(self):
+        g = game.Game()
+        with patch.object(game.window.gameBridge, "save", create=True) as save:
+            g.start("저장 검증")
+            save.assert_called_once()
+            save.reset_mock()
+            g.tick(1.6, "[]", "[]", "null")
+            save.assert_called_once()
+
     def test_prayer_is_limited_by_completed_church_quests(self):
         g = self.new_game()
         p = g.player
