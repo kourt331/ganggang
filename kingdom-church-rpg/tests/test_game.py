@@ -1,0 +1,240 @@
+"""Regression checks for the Python game rules (no browser required)."""
+import json
+import random
+import sys
+import types
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+from types import SimpleNamespace
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+frames = []
+js_module = types.ModuleType("js")
+js_module.window = SimpleNamespace(gameBridge=SimpleNamespace(draw=frames.append))
+sys.modules.setdefault("js", js_module)
+import game
+
+
+class GameRegressionTests(unittest.TestCase):
+    def new_game(self, seed=7):
+        random.seed(seed)
+        g = game.Game()
+        g.start("검증용")
+        return g
+
+    def test_random_starts_never_send_beastkin_to_royal_city(self):
+        royal_areas = {"왕실 상점가", "왕국 기사단", "왕국 안", "왕의 방"}
+        for seed in range(100):
+            g = self.new_game(seed)
+            self.assertFalse(g.player["race"] == "수인" and g.area in royal_areas)
+
+    def test_religion_is_assigned_from_the_random_start(self):
+        g = game.Game()
+        with patch("game.random.choice", side_effect=["인간", "여성", "교회 밖"]):
+            g.start("신앙 검증")
+        self.assertEqual(g.player["religion"], "교회 신앙")
+
+    def test_all_area_scenes_render(self):
+        g = self.new_game()
+        for area, (width, height) in game.MAP_SIZE.items():
+            g.area = area
+            g.player.update(area=area, x=width // 2, y=height // 2)
+            g.spawn_enemies()
+            g.draw()
+        self.assertTrue(frames)
+        self.assertIsInstance(json.loads(frames[-1]), list)
+
+    def test_prayer_is_limited_by_completed_church_quests(self):
+        g = self.new_game()
+        p = g.player
+        p.update(faction="교회", job="전사", area="교회 안", prayer_count=0,
+                 church_quests_completed=1, prayer_due=True, x=480, y=130)
+        g.area = "교회 안"
+        g.interact()
+        self.assertEqual(p["prayer_count"], 1)
+        self.assertFalse(p["prayer_due"])
+        g.interact()
+        self.assertEqual(p["prayer_count"], 1)
+
+    def test_church_faith_restores_mp_when_praying(self):
+        g = self.new_game()
+        p = g.player
+        p.update(faction="교회", job="신자", religion="교회 신앙", area="교회 안",
+                 prayer_count=0, church_quests_completed=1, mp=0, x=480, y=130)
+        g.area = "교회 안"
+        g.interact()
+        self.assertEqual(p["mp"], 3)
+
+    def test_kingdom_faith_adds_gold_to_royal_quest_reward(self):
+        g = self.new_game()
+        p = g.player
+        p.update(faction="왕실", religion="왕실 신앙", job="전사", gold=0,
+                 quest={"title":"왕실 토벌","source":"kingdom","goal":1,"count":1})
+        g.complete_monster_quest()
+        self.assertEqual(p["gold"], 30)
+
+    def test_forest_faith_improves_flee_odds(self):
+        g = self.new_game()
+        g.player["religion"] = "숲의 신앙"
+        g.enemies = [{"name":"늑대","x":400,"y":300,"hp":90,"maxhp":90,
+                      "atk":1,"level":1,"alive":True}]
+        g.start_battle(0)
+        with patch("game.random.random", return_value=0.52):
+            g.battle_action("flee")
+        self.assertEqual(g.mode, "world")
+
+    def test_successful_priest_quest_grants_one_prayer(self):
+        g = self.new_game()
+        p = g.player
+        p.update(faction="교회", job="전사")
+        g.after_church_quest("church")
+        self.assertEqual(p["church_quests_completed"], 1)
+        self.assertTrue(p["prayer_due"])
+
+    def test_exiled_church_warrior_can_leave_village_but_not_reenter_church(self):
+        g = self.new_game()
+        p = g.player
+        p.update(faction="교회", area="교회 안", prayer_due=True)
+        g.area = "교회 안"
+        g.move_area("마을")
+        self.assertEqual(g.area, "마을")
+        self.assertEqual(p["faction"], "방랑자")
+        self.assertFalse(p["prayer_due"])
+        g.move_area("숲")
+        self.assertEqual(g.area, "숲")
+        g.move_area("교회 밖")
+        self.assertEqual(g.area, "숲")
+
+    def test_active_quest_cannot_be_overwritten(self):
+        g = self.new_game()
+        g.accept_quest("첫 의뢰", "church")
+        g.accept_quest("두 번째 의뢰", "kingdom")
+        self.assertEqual(g.player["quest"]["title"], "첫 의뢰")
+
+    def test_player_must_leave_current_faction_before_taking_a_new_job(self):
+        g = self.new_game()
+        p = g.player
+        g.area = "왕국 기사단"
+        p.update(area="왕국 기사단", faction="교회", job="전사", x=500, y=330)
+        g.interact()
+        self.assertNotIn("전사로 수련 시작", g.dialog["options"])
+        g.choose(0)
+        self.assertEqual(p["faction"], "무소속")
+        self.assertEqual(p["job"], "전사")
+
+    def test_killing_a_human_does_not_complete_monster_quest(self):
+        g = self.new_game()
+        p = g.player
+        p.update(atk=50, quest={"title":"숲의 마물 퇴치","source":"church","goal":1,"count":0})
+        g.enemies = [{"name":"상점 주인","x":400,"y":300,"hp":1,"maxhp":1,
+                      "atk":1,"level":1,"alive":True,"human":True}]
+        g.start_battle(0)
+        g.battle_action("basic")
+        self.assertEqual(g.mode, "battle")
+        self.assertEqual(g.battle["effect"], "slash")
+        g.tick(0.6, "[]", "[]", "null")
+        self.assertEqual(p["quest"]["count"], 0)
+        self.assertIsNotNone(p["quest"])
+
+    def test_repeat_equipment_purchase_does_not_stack_stats(self):
+        g = self.new_game()
+        p = g.player
+        p["gold"] = 500
+        g.open_dialog("상점", "", ["붕대", "철검", "갑옷", "나가기"])
+        g.choose(1)
+        attack_after_purchase = p["atk"]
+        gold_after_purchase = p["gold"]
+        g.open_dialog("상점", "", ["붕대", "철검", "갑옷", "나가기"])
+        g.choose(1)
+        self.assertEqual(p["atk"], attack_after_purchase)
+        self.assertEqual(p["gold"], gold_after_purchase)
+
+    def test_attack_opens_skill_choices_before_damage(self):
+        g = self.new_game()
+        g.enemies = [{"name":"늑대","x":400,"y":300,"hp":90,"maxhp":90,
+                      "atk":1,"level":1,"alive":True}]
+        g.start_battle(0)
+        g.battle_action("attack")
+        self.assertEqual(g.battle["submenu"], "attack")
+        self.assertEqual(g.enemies[0]["hp"], 90)
+        g.battle_action("skill")
+        self.assertLess(g.enemies[0]["hp"], 90)
+
+    def test_defense_blocks_the_enemy_turn(self):
+        g = self.new_game()
+        g.player["hp"] = 55
+        g.enemies = [{"name":"멧돼지","x":400,"y":300,"hp":90,"maxhp":90,
+                      "atk":30,"level":1,"alive":True}]
+        g.start_battle(0)
+        g.battle_action("defend")
+        self.assertEqual(g.player["hp"], 55)
+        self.assertFalse(g.battle["defending"])
+
+    def test_bandage_does_not_consume_a_combat_turn(self):
+        g = self.new_game()
+        g.player.update(hp=50, maxhp=100, bandages=2)
+        g.enemies = [{"name":"늑대","x":400,"y":300,"hp":90,"maxhp":90,
+                      "atk":30,"level":1,"alive":True}]
+        g.start_battle(0)
+        g.battle_action("item")
+        self.assertEqual(g.player["hp"], 62)
+        self.assertEqual(g.player["bandages"], 1)
+        self.assertEqual(g.enemies[0]["hp"], 90)
+
+    def test_forest_walk_triggers_an_immediate_ambush(self):
+        g = self.new_game()
+        g.area = "숲"
+        g.player.update(area="숲", x=1200, y=800)
+        g.spawn_enemies()
+        g.walk_meter = 189
+        with patch("game.random.random", return_value=0.0):
+            g.update_world_ai(0.1, 2)
+        self.assertEqual(g.mode, "battle")
+        self.assertIn(g.enemies[g.battle["index"]]["name"], {"멧돼지", "늑대", "고블린"})
+
+    def test_wanderer_groups_move_automatically(self):
+        g = self.new_game()
+        g.area = "숲"
+        g.player["area"] = "숲"
+        g.spawn_enemies()
+        before = (g.wanderers[0]["x"], g.wanderers[0]["y"])
+        g.update_world_ai(0.5, 0)
+        after = (g.wanderers[0]["x"], g.wanderers[0]["y"])
+        self.assertNotEqual(before, after)
+
+    def test_e_dismisses_the_notice_without_interacting(self):
+        g = self.new_game()
+        g.notice = "닫을 안내"
+        g.notice_t = 3
+        g.tick(0.03, "[]", '["e"]', "null")
+        self.assertEqual(g.notice_t, 0)
+        self.assertIsNone(g.dialog)
+
+    def test_royal_route_is_connected_in_order(self):
+        g = self.new_game()
+        g.area = "마을"
+        g.player.update(area="마을", race="인간", faction="왕실")
+        route = ("왕실 상점가", "왕국 기사단", "왕국 안", "왕의 방")
+        for area in route:
+            g.move_area(area)
+            self.assertEqual(g.area, area)
+
+    def test_death_returns_to_last_area_and_halves_gold(self):
+        g = self.new_game()
+        g.player.update(hp=1, maxhp=100, gold=101, visited_faction="교회 안")
+        g.enemies = [{"name":"늑대","x":400,"y":300,"hp":90,"maxhp":90,
+                      "atk":40,"level":1,"alive":True}]
+        g.start_battle(0)
+        g.enemy_turn()
+        self.assertEqual(g.area, "교회 안")
+        self.assertEqual(g.player["gold"], 50)
+        self.assertEqual(g.player["hp"], g.player["maxhp"])
+        self.assertEqual((g.player["x"], g.player["y"]), (480, 640))
+
+
+if __name__ == "__main__":
+    unittest.main()
