@@ -126,6 +126,34 @@ class GameRegressionTests(unittest.TestCase):
         self.assertEqual(p["church_quests_completed"], 1)
         self.assertTrue(p["prayer_due"])
 
+    def test_ten_church_quests_and_prayers_finish_chapter_as_crusader(self):
+        g = self.new_game()
+        p = g.player
+        p.update(faction="교회", job="전사", religion="교회 신앙", area="교회 안",
+                 prayer_count=0, church_quests_completed=0, priest_refusals=0, prayer_due=False)
+        g.area = "교회 안"
+        p.update(x=480, y=130)
+        for _ in range(10):
+            p["quest"]={"title":"숲의 마물 퇴치","source":"church","goal":1,"count":1}
+            g.complete_monster_quest()
+            g.dialog=None
+            g.interact()
+        self.assertEqual(p["prayer_count"], 10)
+        self.assertEqual(p["job"], "성전사")
+        self.assertTrue(p["promoted"])
+        self.assertEqual(g.dialog["title"], "직업 승급")
+
+    def test_ten_royal_quests_finish_chapter_as_knight(self):
+        g = self.new_game()
+        p = g.player
+        p.update(faction="왕실", job="전사", religion="왕실 신앙", king_quests=0)
+        for _ in range(10):
+            p["quest"]={"title":"왕실 토벌","source":"kingdom","goal":1,"count":1}
+            g.complete_monster_quest()
+        self.assertEqual(p["king_quests"], 10)
+        self.assertEqual(p["job"], "기사")
+        self.assertEqual(g.dialog["title"], "직업 승급")
+
     def test_exiled_church_warrior_can_leave_village_but_not_reenter_church(self):
         g = self.new_game()
         p = g.player
@@ -170,6 +198,18 @@ class GameRegressionTests(unittest.TestCase):
         g.tick(0.6, "[]", "[]", "null")
         self.assertEqual(p["quest"]["count"], 0)
         self.assertIsNotNone(p["quest"])
+
+    def test_thief_becomes_bandit_after_killing_a_human(self):
+        g = self.new_game()
+        p = g.player
+        p.update(job="도둑", faction="방랑자", atk=50)
+        g.enemies = [{"name":"상점 주인","x":400,"y":300,"hp":1,"maxhp":1,
+                      "atk":1,"level":1,"alive":True,"human":True}]
+        g.start_battle(0)
+        g.battle_action("basic")
+        g.tick(0.6, "[]", "[]", "null")
+        self.assertEqual(p["job"], "도적")
+        self.assertEqual(g.dialog["title"], "직업 승급")
 
     def test_repeat_equipment_purchase_does_not_stack_stats(self):
         g = self.new_game()
